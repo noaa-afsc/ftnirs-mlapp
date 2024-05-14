@@ -19,6 +19,9 @@ STORAGE_CLIENT = storage.Client(project=os.getenv("GCP_PROJ"))
 DATA_BUCKET = os.getenv("DATA_BUCKET")
 TMP_BUCKET = os.getenv("TMP_BUCKET")
 
+PARAMS_DICT = {} #global state of currently selected params.
+PARAMS_DICT_RUN = {} #global state of last run params.
+
 def get_objs():
     objs = list(STORAGE_CLIENT.list_blobs(DATA_BUCKET))
     return [i._properties["name"] for i in objs]
@@ -60,6 +63,24 @@ app.layout = html.Div(id='parent', children=[
                 id="alert-model-fail",
                 is_open=False,
                 color="danger",
+                duration=4000),
+            dbc.Alert(
+                "Run Failed: no datasets specified",
+                id="alert-model-run-ds-fail",
+                is_open=False,
+                color="danger",
+                duration=4000),
+            dbc.Alert(
+                "Run Failed: no model specified",
+                id="alert-model-run-models-fail",
+                is_open=False,
+                color="danger",
+                duration=4000),
+            dbc.Alert(
+                "Run Failed: error while processing algorithm",
+                id="alert-model-run-processing-fail",
+                is_open=False,
+                color="danger",
                 duration=4000)
         ]),
     html.Div(
@@ -67,16 +88,16 @@ app.layout = html.Div(id='parent', children=[
         html.Div(
     [
                 html.H2(id='H2_1', children='Select Datasets',
-                    style={'textAlign': 'center', 'marginTop': 20}),
+                    style={'textAlign': 'left', 'marginTop': 20}),
                 html.Hr(style={'marginBottom': 40}),
                 dcc.Checklist(id='dataset-select',
                     options=get_datasets(), # [9:]if f"datasets/" == i[:8]
-                    value=[]),
+                    value=[],style={'width':630}),
                 dcc.Upload(
                     id='upload-ds',
                     children=html.Button('Upload File(s)'),
                     multiple=True)
-            ],style={"display": "inline-block",'vertical-align': 'top','textAlign': 'center','marginRight': 200}),
+            ],style={"display": "inline-block",'vertical-align': 'top','textAlign': 'left','marginRight': 200}),
 
         html.Div(
     [
@@ -87,7 +108,7 @@ app.layout = html.Div(id='parent', children=[
                     [
                         html.Div(id='toggle-mode-output',style = {"display": "inline-block",'textAlign': 'left','width': 200}),
                         daq.ToggleSwitch(id='toggle-mode',
-                            value=False,
+                            value=True,
                             style ={"display": "inline-block"}),
                     ]),
                 dcc.Dropdown(id='model-select'),
@@ -106,34 +127,118 @@ app.layout = html.Div(id='parent', children=[
     html.Div(
         [
             html.Hr(style = {'marginTop': 50}),
-            html.Button('RUN',id="run-button", style={'textAlign': 'left','vertical-align': 'top','marginLeft': 650}),
+            html.Button('RUN',id="run-button"),
+            html.Div(id='run-message',children=[]),
             html.Hr()
-        ]),
-    html.Div(id = "outputs-holder")
-])
+        ], style={'textAlign': 'center','vertical-align': 'top'}), #,'marginLeft': 650
+html.Div(
+        [
+        html.Div(
+        [
+                    html.Div(id='config-report',children =[],style={'textAlign': 'left','vertical-align': 'top','width': 400,'height': 300})#
+             ],style={"display": "inline-block",'vertical-align': 'top','textAlign': 'center','marginRight': 200}),
+        html.Div(
+            [
+                    html.Div(id = "artifacts-holder"),
+                    html.Div(id = "stats-holder")
+            ],style={"display": "inline-block",'vertical-align': 'top','textAlign': 'center','marginRight': 200}),
+        html.Div(
+                [
+                    html.Button("Download Results", id="btn-download-results"),
+                    dcc.Download(id="download-results"),
+                    html.Div(id = "train-out")
+                ],style={"display": "inline-block",'vertical-align': 'top'})
+        ],style={"display": "inline-block",'vertical-align': 'top'})
 
-#refactor to have a single 'parameter holder' as input
+])
 @app.callback(
-Output('outputs-holder', 'children'),
+    Output('alert-model-run-processing-fail','is_open'),
+     Output('alert-model-run-ds-fail','is_open'),
+     Output('alert-model-run-models-fail','is_open'),
+     Output('run-message', 'children'),
+     Output('config-report', 'children'),
+     Output('train-out', 'children'),
+     #Output('output-data', 'value'),
+     #Output('artifacts', 'value'),
+     #Output('artifacts', 'value'),
+     #Output('stats', 'value'),
      Input('run-button', 'n_clicks'),
      State('toggle-mode', 'value'),
      State('model-select', 'value'),
-     State('checklist-params', 'value'),
-     State('slider-1-params-name', 'children'),
-     State('slider-1-params', 'value')
+     State('dataset-select', 'value')
  )
-def run_model(n_clicks,mode,model,checklist_params,slider_1_params_name,slider_1_params):
+def run_model(n_clicks,mode,model,datasets):
 
-    params = list(zip([slider_1_params_name],[slider_1_params])) #add to internal lists as use more params inputs
+    if n_clicks is not None:
 
-    print(params)
+        global PARAMS_DICT_RUN
 
-    config_out = "Configuration<br>Run mode:"+ "Inference" if mode else "Training" +"\nRun model: "+model+\
-                                                 "\nChecklist parameters selected: "+"\n\t-".join(checklist_params)+\
-                                                 "\nParameters values selected: "+\
-                                                 "".join(["\n\t"+a+":"+str(b) for (a,b) in params])
+        PARAMS_DICT_RUN = PARAMS_DICT
 
-    return dcc.Textarea(id='config_report',value = config_out,style={'width': 3000,'height': 3000})
+        message = "Run Failed: "
+
+        processing_fail = False
+        ds_fail = False
+        model_fail = False
+
+        any_error = False
+
+        if len(datasets)==0:
+
+            message = message + "no datasets specified"
+            ds_fail = True
+            config_out_payload = []
+
+            any_error = True
+
+            #payload = False,True,False,"Run Failed: ",[]
+        if model is None:
+            if any_error:
+                message = message + " & no model specified"
+            else:
+                message = message + "no model specified"
+            model_fail = True
+
+            any_error = True
+            config_out_payload = []
+            #payload = False,False,False,"Run Failed: no model specified",[]
+
+
+        if not any_error:
+            try:
+
+                #config_out = "Run Configuration:\n +\"Mode:"+ ("Inference" if mode else "Training")
+                #                                            "\nModel: "+model+\
+                #                                            "\nDatasets: " + "".join(["\n\t-" + str(i) for i in datasets])+\
+                #                                            "\nParameters selected: "+ "".join(["\n\t-"+a+":"+str(b) for (a,b) in PARAMS_DICT.items()])
+
+                config_out_children = [html.Div(id='run-name-block',children =[html.Div(id='run-name-prompt',children = "Run name:"),
+                                            dcc.Input(id='run-name', type="text", placeholder="my unique run name",style={'textAlign': 'left', 'vertical-align': 'top', 'width': 400})
+                                                                                ],style={"display": "inline-block"}) if not mode else ""] +\
+                                       [html.Div(id='config-report-rc',children = "Run Configuration:"),
+                                       html.Div(id='config-report-mode', children="Mode: "+ ("Inference" if mode else "Training")),
+                                       html.Div(id='config-report-model',children="Model: " + model),
+                                       html.Div(id='config-report-datasets',children ='Datasets: ')] +\
+                                       [html.Div(id='config-report-datasets-' + i,children="- "+str(i),style={'marginLeft': 15}) for i in datasets] +\
+                                       [html.Div(id='config-report-parameters',children ='Parameters: ')] + \
+                                       [html.Div(id='config-report-parameters-' + a,children="- "+a+": "+str(b),style={'marginLeft': 15}) for (a,b) in PARAMS_DICT.items()]
+                #this is where model will actually run
+                #data,artifacts,stats = run_model(mode,model,datasets)
+
+                #html.Div(id='config-report-mode'),
+                #html.Div(id='config-report-model'),
+                #html.Div(id='config-report-datasets'),
+                #html.Div(id='config-report-parameters')]
+
+                message = "Run Succeeded!"
+
+                config_out_payload = config_out_children
+            except Exception as e:
+                message = "Run Failed: error while processing algorithm"
+                config_out_payload = [html.Div(id='error title',children="ERROR:"),html.Div(id='error message',children =[str(e)])]
+                processing_fail = True
+
+        return [processing_fail,ds_fail,model_fail,message,config_out_payload,html.Button("Upload Trained model", id="btn-upload-model") if not mode else ""]
 
 @app.callback(#Output('params-select', 'options'),
                     #Output('params-select', 'value'),
@@ -143,6 +248,10 @@ def run_model(n_clicks,mode,model,checklist_params,slider_1_params_name,slider_1
 )
 def get_parameters(mode,model):
 
+    global PARAMS_DICT
+
+    PARAMS_DICT = {}
+
     if model is not None:
         #inference
         if mode:
@@ -150,17 +259,18 @@ def get_parameters(mode,model):
             #hopefully will not be particular to a certain model.
 
             if model == "hello4.hd5":
-                return [dcc.Checklist(id='checklist-params', options=["on_GPU","specific other thing","secret third thing"])]
+                return [dcc.Checklist(id='checklist-params', options=["on_GPU","specific other thing","secret third thing"], value=[False,False,False])]
             else:
-                return [dcc.Checklist(id='checklist-params', options=["on_GPU"], value=[])]
+                return [dcc.Checklist(id='checklist-params', options=["on_GPU"], value=[False])]
         #training
         else:
-            #this will largely be populated manually
+            #this will largely be populated manually (hardcoded).  Right now, that will look like Michael explaining to Dan
+            #the relevant training hyperparameters to expose per modeling approach ("archetecture").
             if model == "this architecture":
                 #return ["test"],[],dcc.Slider(0, 20, 5,value=10,id='test-conditional-component')
                 return [dcc.Checklist(id='checklist-params', options=["test"], value=[]),
-                        html.Div(id='slider-1-params-name',style={'textAlign': 'left'},children="var1"),
-                        dcc.Slider(0, 20, 5,value=10,id='slider-1-params')]
+                        html.Div(id='var1-param-name',style={'textAlign': 'left'},children="var1"),
+                        dcc.Slider(0, 20, 5,value=10,id='var1-param')]
             elif model == "that architecture":
                 #return ["on_GPU","other thing"],[],[]
                 return [dcc.Checklist(id='checklist-params', options=["on_GPU","other thing"], value=[])]
@@ -180,7 +290,7 @@ def get_parameters(mode,model):
 def update_model_checklist(inference,is_open):
 
     if inference:
-        return get_models(),html.Button('Upload Model(s)')
+        return get_models(),html.Button('Upload Trained Model(s)')
     else:
         return get_archetectures(),None
 
@@ -258,6 +368,34 @@ def data_check_models(data):
         return False
 
     return True
+
+################################as add parameters, give it this boilerplate:
+
+@app.callback(Input('checklist-params', 'value'),
+              Input('checklist-params', 'options'),
+              #Input('run-button', 'n_clicks'),
+              Input('params-holder', 'children')
+)
+def checklist_params_dict_pop(value,options,_):
+
+    global PARAMS_DICT
+
+    out_dict = {i: (True if i in value else False) for i in options}
+    for i in out_dict:
+        PARAMS_DICT[i]= out_dict[i]
+
+    print(PARAMS_DICT)
+@app.callback(Input('var1-param', 'value'),
+              Input('params-holder', 'children')
+)
+def checklist_params_dict_pop(value,_):
+    global PARAMS_DICT
+
+    PARAMS_DICT["var1"] = value
+
+    print(PARAMS_DICT)
+
+
 
 
 if __name__ == '__main__':
