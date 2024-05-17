@@ -1,4 +1,6 @@
 import os
+import tarfile
+import io
 from dotenv import load_dotenv
 import dash
 import dash_daq as daq
@@ -25,6 +27,8 @@ TMP_BUCKET = os.getenv("TMP_BUCKET")
 
 PARAMS_DICT = {} #global state of currently selected params.
 PARAMS_DICT_RUN = {} #global state of last run params.
+
+DATASET_TITLES = []
 
 def get_objs():
     objs = list(STORAGE_CLIENT.list_blobs(DATA_BUCKET))
@@ -157,6 +161,96 @@ html.Div(
 
 ])
 
+@app.callback(
+    Output('download-results', "data"),
+    Input('btn-download-results', 'n_clicks'),
+    State('run-name','value'),
+    State('toggle-mode', 'value')
+)
+def download_results(n_clicks,run_name,mode):
+
+    if n_clicks is not None:
+
+        #make a tarball
+        #actually, I do want to use cloud storage instead of local for all files. Reason being is that the shared service
+        #will write to shared files. I could use RUN_ID, but then I'd also need to figure out a way to schedule flushing
+        #the folder versus just using the cloud storage lifecycle rule.
+
+        tar_stream = io.BytesIO()
+
+        with tarfile.open(fileobj=tar_stream, mode="w:gz") as tar:
+            #stats
+            blob = STORAGE_CLIENT.bucket(TMP_BUCKET).blob(f"stats_{RUN_ID}.csv")
+
+            obj = io.BytesIO(blob.download_as_bytes())
+            obj.seek(0)
+            info = tarfile.TarInfo(name = "stats.csv")
+            info.size = len(obj.getvalue())
+            tar.addfile(tarinfo = info,fileobj=obj)
+
+            #config
+            blob = STORAGE_CLIENT.bucket(TMP_BUCKET).blob(f"config_{RUN_ID}.yml")
+
+            obj = io.BytesIO(blob.download_as_bytes())
+            obj.seek(0)
+            info = tarfile.TarInfo(name="config.yml")
+            info.size = len(obj.getvalue())
+            tar.addfile(tarinfo=info, fileobj=obj)
+
+            #add model object
+            if not mode:
+                blob = STORAGE_CLIENT.bucket(TMP_BUCKET).blob(f"trained_model_{RUN_ID}.hd5")
+
+                obj = io.BytesIO(blob.download_as_bytes())
+                obj.seek(0)
+                info = tarfile.TarInfo(name=f"{run_name}_trained_model.hd5")
+                info.size = len(obj.getvalue())
+                tar.addfile(tarinfo=info, fileobj=obj)
+
+            #add data
+
+            for i in DATASET_TITLES:
+                blob = STORAGE_CLIENT.bucket(TMP_BUCKET).blob(f"{i}_{RUN_ID}.txt")
+
+                obj = io.BytesIO(blob.download_as_bytes())
+                obj.seek(0)
+                info = tarfile.TarInfo(name=f"{i}.txt")
+                info.size = len(obj.getvalue())
+                tar.addfile(tarinfo=info, fileobj=obj)
+
+        tar_stream.seek(0)
+        return dcc.send_bytes(tar_stream.getvalue(),f"{RUN_ID}_data.tar.gz")
+
+        #with tarfile.open(f"./tmp/{RUN_ID}_data.tar.gz", "w:gz") as tar:
+        #    #add stats table
+        #    blob = STORAGE_CLIENT.bucket(TMP_BUCKET).blob(f"stats_{RUN_ID}.csv")
+        #    blob.download_to_filename(f"./tmp/stats_{RUN_ID}.csv")
+        #    tar.add(f"./tmp/stats_{RUN_ID}.csv", arcname="stats.csv")
+        #    #add config
+        #    blob = STORAGE_CLIENT.bucket(TMP_BUCKET).blob(f"config_{RUN_ID}.yml")
+        #    #tar.add(f"./tmp/config_{RUN_ID}.yml", arcname="config.yml")
+        #    tar.add(blob.download_as_bytes(f"./tmp/config_{RUN_ID}.yml").decode("utf-8"),arcname="config.yml")
+        #    #add model object
+        #    if not mode:
+        #        blob = STORAGE_CLIENT.bucket(TMP_BUCKET).blob(f"trained_model_{RUN_ID}.hd5")
+        #        blob.download_to_filename(f"./tmp/{run_name}_trained_model_{RUN_ID}.hd5")
+        #        tar.add(f"./tmp/{run_name}_trained_model_{RUN_ID}.hd5", arcname=f"{run_name}_trained_model.hd5")
+        #    #add data
+        #    for i in DATASET_TITLES:
+        #        blob = STORAGE_CLIENT.bucket(TMP_BUCKET).blob(f"{i}_{RUN_ID}.txt")
+        #        blob.download_to_filename(f"./tmp/{i}_{RUN_ID}.hd5")
+        #        tar.add(f"./tmp/{i}_{RUN_ID}.txt", arcname=f"{i}.txt")
+
+        #print(os.path.isfile("./tmp/data.tar.gz"))
+
+        #save tarball to cloud
+        #blob = STORAGE_CLIENT.bucket(TMP_BUCKET).blob(f'data_{RUN_ID}.tar.gz')
+        #with open("./tmp/data.tar.gz", 'rb') as f:
+        #    blob.upload_from_file(f) #"./tmp/data.tar.gz"
+
+        #return dcc.send_file(f"./tmp/{RUN_ID}_data.tar.gz")
+
+
 
 @app.callback(
     Output('alert-model-run-processing-fail','is_open'),
@@ -164,8 +258,8 @@ html.Div(
      Output('alert-model-run-models-fail','is_open'),
      Output('run-message', 'children'),
      Output('config-report', 'children'),
-     Output('artifacts-out', 'children'),
      Output('stats-out', 'children'),
+     Output('artifacts-out', 'children'),
      Output('download-out', 'children'),
      Output('upload-out', 'children'),
      #Output('output-data', 'value'),
@@ -219,15 +313,21 @@ def model_run_event(n_clicks,mode,model,datasets):
         if not any_error:
             try:
 
-                RUN_ID = hash("".join(["".join(PARAMS_DICT_RUN), str(mode), str(model), "".join(datasets)])+str(time.time())) #time.time() makes it unique even when
+                RUN_ID = abs(hash("".join(["".join(PARAMS_DICT_RUN), str(mode), str(model), "".join(datasets)])+str(time.time()))) #time.time() makes it unique even when
                 #parameters are fixed, may want to change behavior later
 
-                blob = STORAGE_CLIENT.bucket(TMP_BUCKET).blob(f'config_{RUN_ID}.yml')
+                #
+                config_dict = PARAMS_DICT_RUN.copy()
 
-                config_dict = PARAMS_DICT_RUN
+                config_dict.update({"Datasets":",".join(datasets)})
+                config_dict.update({"Model":model})
+                config_dict.update({"Mode":mode})
 
                 config_table = pd.DataFrame(config_dict,index=[0])
 
+                #config_table.to_csv(f"./tmp/config.yml")
+
+                blob = STORAGE_CLIENT.bucket(TMP_BUCKET).blob(f'config_{RUN_ID}.yml')
                 blob.upload_from_string(config_table.to_csv(), 'text/csv')
 
                 PARAMS_DICT_RUN = PARAMS_DICT
@@ -239,7 +339,7 @@ def model_run_event(n_clicks,mode,model,datasets):
 
                 config_out_children = [html.Div(id='run-name-block',children =[html.Div(id='run-name-prompt',children = "Run name:"),
                                             dcc.Input(id='run-name', type="text", placeholder="my_unique_run_name",style={'textAlign': 'left', 'vertical-align': 'top', 'width': 400})
-                                                                                ],style={"display": "inline-block"}) if not mode else ""] +\
+                                                                                ],style={"display": "inline-block"}) if not mode else html.Div(id='run-name')] +\
                                        [html.Div(id='config-report-rc',children = "Run Configuration:"),
                                        html.Div(id='config-report-mode', children="Mode: "+ ("Inference" if mode else "Training")),
                                        html.Div(id='config-report-model',children="Model: " + model),
@@ -267,8 +367,8 @@ def model_run_event(n_clicks,mode,model,datasets):
 
         download_out = [html.Div([html.Button("Download Results", id="btn-download-results"),
                     dcc.Download(id="download-results")]) if not (processing_fail or any_error) else ""]
-
-        artifacts_out = html.Div([artifacts],style={'textAlign': 'left', 'vertical-align': 'top','width': 400})
+        print(artifacts)
+        artifacts_out = html.Div(artifacts,style={'textAlign': 'left', 'vertical-align': 'top','width': 400})
 
         stats_out = html.Div([
                         html.Div(
@@ -277,7 +377,7 @@ def model_run_event(n_clicks,mode,model,datasets):
                             dash_table.DataTable(stats.to_dict('records')),
                         ],style={'textAlign': 'left', 'vertical-align': 'top','width': 400}) if not (processing_fail or any_error) else ""])
 
-        return [processing_fail,ds_fail,model_fail,message,config_out_payload,artifacts_out,stats_out,download_out,html.Button("Upload Trained model", id="btn-upload-model") if not mode and not (processing_fail or any_error) else ""]
+        return [processing_fail,ds_fail,model_fail,message,config_out_payload,stats_out,artifacts_out,download_out,html.Button("Upload Trained model", id="btn-upload-model") if not mode and not (processing_fail or any_error) else ""]
 
 @app.callback(#Output('params-select', 'options'),
                     #Output('params-select', 'value'),
@@ -297,10 +397,12 @@ def get_parameters(mode,model):
             #we will ideally want this to read properties of the model object itself to run this.
             #hopefully will not be particular to a certain model.
 
-            if model == "hello4.hd5":
-                return [dcc.Checklist(id='checklist-params', options=["on_GPU","specific other thing","secret third thing"], value=[False,False,False])]
-            else:
-                return [dcc.Checklist(id='checklist-params', options=["on_GPU"], value=[False])]
+            return dcc.Checklist(id='checklist-params', options=["on_GPU"], value=[False])
+
+            #if model == "hello4.hd5":
+            #    return [dcc.Checklist(id='checklist-params', options=["on_GPU","specific other thing","secret third thing"], value=[False,False,False])]
+            #else:
+            #    return []
         #training
         else:
             #this will largely be populated manually (hardcoded).  Right now, that will look like Michael explaining to Dan
@@ -438,31 +540,46 @@ def checklist_params_dict_pop(value,_):
 
 def run_model(mode,model,datasets):
 
+    global DATASET_TITLES
+
     start = time.time()
 
     if mode:
 
-        data = []
-        artifacts = []
+        data = [[rand.randint(1,15) for i in range(100)]]
+        titles = ['Data: Ages'] #go.Scatter(x=list(range(len(data))), y=data)
+        graphs = [html.Div(id='figure-title', style={'textAlign': 'left'}, children=titles[0]),dcc.Graph(id='figure',figure = go.Figure(data=[go.Histogram(x=data[0])]).update_layout(margin=dict(l=20, r=20, t=20, b=20)))]
 
         #question- show dynamic graphs or pngs? probably depends on real artifacts
 
         stats = {'max_cpu_used':[rand.randint(0,100)],'max_memory_used':[rand.randint(0,256)],'time_elapsed':["{:.2f}".format(time.time() - start)]}
 
     else:
-        data = []
-        artifacts = [dcc.Graph(id='figure',figure = go.Figure(data=[go.Scatter(x=[1, 2, 3], y=[4, 1, 2])]))]
+        data = [[[1,2,3],[1,0.97,0.2]]]
+        titles = ['Data: Performance curve']
+        graphs = [html.Div(id='figure-title', style={'textAlign': 'left'}, children=titles[0]),dcc.Graph(id='figure',figure = go.Figure(data=[go.Scatter(x=data[0][0], y=data[0][1])]).update_layout(margin=dict(l=20, r=20, t=20, b=20)))]
         stats = {'Accuracy':["{:.2f}".format(rand.randint(0,100)/100)],'Recall':["{:.2f}".format(rand.randint(0,100)/100)],'AUC':["{:.2f}".format(rand.randint(0,100)/100)],'time_elapsed':["{:.2f}".format(time.time() - start)]}
+
+        #write out model object
+        blob = STORAGE_CLIENT.bucket(TMP_BUCKET).blob(f"trained_model_{RUN_ID}.hd5")
+        blob.upload_from_string(pd.DataFrame([1,2,3]).to_csv(), 'text/csv')
 
     stats_table = pd.DataFrame.from_dict(stats)
 
     # write out data, artifacts, stats_table to tmp files
-    blob = STORAGE_CLIENT.bucket(TMP_BUCKET).blob(f'stats_{RUN_ID}')
+    blob = STORAGE_CLIENT.bucket(TMP_BUCKET).blob(f'stats_{RUN_ID}.csv')
     blob.upload_from_string(stats_table.to_csv(), 'text/csv')
 
+    artifacts = [html.Div(id='figure-area', children=graphs)]
+
+    DATASET_TITLES = titles
+
+    #save plot data to tmp files
+    for i in range(len(DATASET_TITLES)):
+        blob = STORAGE_CLIENT.bucket(TMP_BUCKET).blob(f"{titles[i]}_{RUN_ID}.txt")
+        blob.upload_from_string(pd.DataFrame(data[i]).to_csv(), 'text/csv')
+
     return data, artifacts, stats_table
-
-
 
 if __name__ == '__main__':
 
