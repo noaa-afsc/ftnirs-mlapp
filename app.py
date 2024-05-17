@@ -3,10 +3,14 @@ from dotenv import load_dotenv
 import dash
 import dash_daq as daq
 import plotly.graph_objects as go
-from dash import dcc,html,State
+from dash import dcc,html,State, dash_table
 import dash_bootstrap_components as dbc
 from dash.dependencies import Input, Output
+import pandas as pd
+import random as rand
 from google.cloud import storage
+import plotly.graph_objects as go
+import time
 import base64
 
 external_stylesheets = [dbc.themes.BOOTSTRAP,'https://codepen.io/chriddyp/pen/bWLwgP.css']
@@ -32,7 +36,7 @@ def get_datasets():
 def get_models():
     return [i[7:] for i in get_objs() if "models/" == i[:7]]
 def get_archetectures():
-    return ["this architecture","that architecture","other thing"]
+    return ["michael_deeper_arch","irina_og_arch","new_exp_arch"]
 
 app = dash.Dash(__name__,requests_pathname_prefix ="/ftnirs_mlapp/",routes_pathname_prefix="/ftnirs_mlapp/" ,external_stylesheets=external_stylesheets)
 
@@ -92,12 +96,12 @@ app.layout = html.Div(id='parent', children=[
                 html.Hr(style={'marginBottom': 40}),
                 dcc.Checklist(id='dataset-select',
                     options=get_datasets(), # [9:]if f"datasets/" == i[:8]
-                    value=[],style={'width':630}),
+                    value=[],style={'width':800}),
                 dcc.Upload(
                     id='upload-ds',
                     children=html.Button('Upload File(s)'),
                     multiple=True)
-            ],style={"display": "inline-block",'vertical-align': 'top','textAlign': 'left','marginRight': 200}),
+            ],style={"display": "inline-block",'vertical-align': 'top','textAlign': 'left','marginRight': 20}),
 
         html.Div(
     [
@@ -128,36 +132,42 @@ app.layout = html.Div(id='parent', children=[
         [
             html.Hr(style = {'marginTop': 50}),
             html.Button('RUN',id="run-button"),
-            html.Div(id='run-message',children=[]),
+            dcc.Loading(id='run-message',children=[]),
+            #html.Div(id='run-message',children=[]),
             html.Hr()
         ], style={'textAlign': 'center','vertical-align': 'top'}), #,'marginLeft': 650
 html.Div(
         [
         html.Div(
         [
-                    html.Div(id='config-report',children =[],style={'textAlign': 'left','vertical-align': 'top','width': 400,'height': 300})#
+                    html.Div(id='config-report',children =[],style={'textAlign': 'left','vertical-align': 'top','width': 580,'height': 300})#
              ],style={"display": "inline-block",'vertical-align': 'top','textAlign': 'center','marginRight': 200}),
         html.Div(
             [
-                    html.Div(id = "artifacts-holder"),
-                    html.Div(id = "stats-holder")
+                    html.Div(id = "artifacts-out"),
+                    html.Div(id = "stats-out")
             ],style={"display": "inline-block",'vertical-align': 'top','textAlign': 'center','marginRight': 200}),
         html.Div(
                 [
-                    html.Button("Download Results", id="btn-download-results"),
-                    dcc.Download(id="download-results"),
-                    html.Div(id = "train-out")
+
+                    html.Div(id = "download-out"),
+                    html.Div(id = "upload-out")
                 ],style={"display": "inline-block",'vertical-align': 'top'})
         ],style={"display": "inline-block",'vertical-align': 'top'})
 
 ])
+
+
 @app.callback(
     Output('alert-model-run-processing-fail','is_open'),
      Output('alert-model-run-ds-fail','is_open'),
      Output('alert-model-run-models-fail','is_open'),
      Output('run-message', 'children'),
      Output('config-report', 'children'),
-     Output('train-out', 'children'),
+     Output('artifacts-out', 'children'),
+     Output('stats-out', 'children'),
+     Output('download-out', 'children'),
+     Output('upload-out', 'children'),
      #Output('output-data', 'value'),
      #Output('artifacts', 'value'),
      #Output('artifacts', 'value'),
@@ -167,19 +177,21 @@ html.Div(
      State('model-select', 'value'),
      State('dataset-select', 'value')
  )
-def run_model(n_clicks,mode,model,datasets):
+def model_run_event(n_clicks,mode,model,datasets):
 
     if n_clicks is not None:
 
         global PARAMS_DICT_RUN
 
-        PARAMS_DICT_RUN = PARAMS_DICT
+        global RUN_ID
 
         message = "Run Failed: "
 
         processing_fail = False
         ds_fail = False
         model_fail = False
+
+        data, artifacts, stats = [], [], []
 
         any_error = False
 
@@ -207,13 +219,26 @@ def run_model(n_clicks,mode,model,datasets):
         if not any_error:
             try:
 
+                RUN_ID = hash("".join(["".join(PARAMS_DICT_RUN), str(mode), str(model), "".join(datasets)])+str(time.time())) #time.time() makes it unique even when
+                #parameters are fixed, may want to change behavior later
+
+                blob = STORAGE_CLIENT.bucket(TMP_BUCKET).blob(f'config_{RUN_ID}.yml')
+
+                config_dict = PARAMS_DICT_RUN
+
+                config_table = pd.DataFrame(config_dict,index=[0])
+
+                blob.upload_from_string(config_table.to_csv(), 'text/csv')
+
+                PARAMS_DICT_RUN = PARAMS_DICT
+
                 #config_out = "Run Configuration:\n +\"Mode:"+ ("Inference" if mode else "Training")
                 #                                            "\nModel: "+model+\
                 #                                            "\nDatasets: " + "".join(["\n\t-" + str(i) for i in datasets])+\
                 #                                            "\nParameters selected: "+ "".join(["\n\t-"+a+":"+str(b) for (a,b) in PARAMS_DICT.items()])
 
                 config_out_children = [html.Div(id='run-name-block',children =[html.Div(id='run-name-prompt',children = "Run name:"),
-                                            dcc.Input(id='run-name', type="text", placeholder="my unique run name",style={'textAlign': 'left', 'vertical-align': 'top', 'width': 400})
+                                            dcc.Input(id='run-name', type="text", placeholder="my_unique_run_name",style={'textAlign': 'left', 'vertical-align': 'top', 'width': 400})
                                                                                 ],style={"display": "inline-block"}) if not mode else ""] +\
                                        [html.Div(id='config-report-rc',children = "Run Configuration:"),
                                        html.Div(id='config-report-mode', children="Mode: "+ ("Inference" if mode else "Training")),
@@ -222,8 +247,9 @@ def run_model(n_clicks,mode,model,datasets):
                                        [html.Div(id='config-report-datasets-' + i,children="- "+str(i),style={'marginLeft': 15}) for i in datasets] +\
                                        [html.Div(id='config-report-parameters',children ='Parameters: ')] + \
                                        [html.Div(id='config-report-parameters-' + a,children="- "+a+": "+str(b),style={'marginLeft': 15}) for (a,b) in PARAMS_DICT.items()]
+
                 #this is where model will actually run
-                #data,artifacts,stats = run_model(mode,model,datasets)
+                data,artifacts,stats = run_model(mode,model,datasets)
 
                 #html.Div(id='config-report-mode'),
                 #html.Div(id='config-report-model'),
@@ -233,12 +259,25 @@ def run_model(n_clicks,mode,model,datasets):
                 message = "Run Succeeded!"
 
                 config_out_payload = config_out_children
+
             except Exception as e:
                 message = "Run Failed: error while processing algorithm"
-                config_out_payload = [html.Div(id='error title',children="ERROR:"),html.Div(id='error message',children =[str(e)])]
+                config_out_payload = [html.Div(id='error-title',children="ERROR:"),html.Div(id='error message',children =[str(e)])]
                 processing_fail = True
 
-        return [processing_fail,ds_fail,model_fail,message,config_out_payload,html.Button("Upload Trained model", id="btn-upload-model") if not mode else ""]
+        download_out = [html.Div([html.Button("Download Results", id="btn-download-results"),
+                    dcc.Download(id="download-results")]) if not (processing_fail or any_error) else ""]
+
+        artifacts_out = html.Div([artifacts],style={'textAlign': 'left', 'vertical-align': 'top','width': 400})
+
+        stats_out = html.Div([
+                        html.Div(
+                        [
+                            html.Div(id='stats-title',children="Run stats:"),
+                            dash_table.DataTable(stats.to_dict('records')),
+                        ],style={'textAlign': 'left', 'vertical-align': 'top','width': 400}) if not (processing_fail or any_error) else ""])
+
+        return [processing_fail,ds_fail,model_fail,message,config_out_payload,artifacts_out,stats_out,download_out,html.Button("Upload Trained model", id="btn-upload-model") if not mode and not (processing_fail or any_error) else ""]
 
 @app.callback(#Output('params-select', 'options'),
                     #Output('params-select', 'value'),
@@ -266,15 +305,15 @@ def get_parameters(mode,model):
         else:
             #this will largely be populated manually (hardcoded).  Right now, that will look like Michael explaining to Dan
             #the relevant training hyperparameters to expose per modeling approach ("archetecture").
-            if model == "this architecture":
+            if model == "michael_deeper_arch":
                 #return ["test"],[],dcc.Slider(0, 20, 5,value=10,id='test-conditional-component')
                 return [dcc.Checklist(id='checklist-params', options=["test"], value=[]),
                         html.Div(id='var1-param-name',style={'textAlign': 'left'},children="var1"),
                         dcc.Slider(0, 20, 5,value=10,id='var1-param')]
-            elif model == "that architecture":
+            elif model == "irina_og_arch":
                 #return ["on_GPU","other thing"],[],[]
                 return [dcc.Checklist(id='checklist-params', options=["on_GPU","other thing"], value=[])]
-            elif model == "other thing":
+            elif model == "new_exp_arch":
                 #return ["on_GPU","other thing","secret third thing"],[],[]
                 return [dcc.Checklist(id='checklist-params', options=["on_GPU","other thing","secret third thing"], value=[])]
     else:
@@ -395,6 +434,33 @@ def checklist_params_dict_pop(value,_):
 
     print(PARAMS_DICT)
 
+#this is the  actual ML integration etc. placeholder
+
+def run_model(mode,model,datasets):
+
+    start = time.time()
+
+    if mode:
+
+        data = []
+        artifacts = []
+
+        #question- show dynamic graphs or pngs? probably depends on real artifacts
+
+        stats = {'max_cpu_used':[rand.randint(0,100)],'max_memory_used':[rand.randint(0,256)],'time_elapsed':["{:.2f}".format(time.time() - start)]}
+
+    else:
+        data = []
+        artifacts = [dcc.Graph(id='figure',figure = go.Figure(data=[go.Scatter(x=[1, 2, 3], y=[4, 1, 2])]))]
+        stats = {'Accuracy':["{:.2f}".format(rand.randint(0,100)/100)],'Recall':["{:.2f}".format(rand.randint(0,100)/100)],'AUC':["{:.2f}".format(rand.randint(0,100)/100)],'time_elapsed':["{:.2f}".format(time.time() - start)]}
+
+    stats_table = pd.DataFrame.from_dict(stats)
+
+    # write out data, artifacts, stats_table to tmp files
+    blob = STORAGE_CLIENT.bucket(TMP_BUCKET).blob(f'stats_{RUN_ID}')
+    blob.upload_from_string(stats_table.to_csv(), 'text/csv')
+
+    return data, artifacts, stats_table
 
 
 
