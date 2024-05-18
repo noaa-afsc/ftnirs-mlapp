@@ -5,9 +5,10 @@ from dotenv import load_dotenv
 import dash
 import dash_daq as daq
 import plotly.graph_objects as go
-from dash import dcc,html,State, dash_table
+from dash import dcc,html,State, dash_table,callback_context
 import dash_bootstrap_components as dbc
 from dash.dependencies import Input, Output
+from dash.exceptions import PreventUpdate
 import pandas as pd
 import random as rand
 from google.cloud import storage
@@ -89,6 +90,18 @@ app.layout = html.Div(id='parent', children=[
                 id="alert-model-run-processing-fail",
                 is_open=False,
                 color="danger",
+                duration=4000),
+            dbc.Alert(
+                "Trained model successfully uploaded from session",
+                id="model-upload-from-session-success",
+                is_open=False,
+                color="success",
+                duration=4000),
+            dbc.Alert(
+                "Trained model upload failure: please specify a unique model name",
+                id="model-upload-from-session-failure",
+                is_open=False,
+                color="danger",
                 duration=4000)
         ]),
     html.Div(
@@ -160,7 +173,6 @@ html.Div(
         ],style={"display": "inline-block",'vertical-align': 'top'})
 
 ])
-
 @app.callback(
     Output('download-results', "data"),
     Input('btn-download-results', 'n_clicks'),
@@ -221,37 +233,6 @@ def download_results(n_clicks,run_name,mode):
         tar_stream.seek(0)
         return dcc.send_bytes(tar_stream.getvalue(),f"{RUN_ID}_data.tar.gz")
 
-        #with tarfile.open(f"./tmp/{RUN_ID}_data.tar.gz", "w:gz") as tar:
-        #    #add stats table
-        #    blob = STORAGE_CLIENT.bucket(TMP_BUCKET).blob(f"stats_{RUN_ID}.csv")
-        #    blob.download_to_filename(f"./tmp/stats_{RUN_ID}.csv")
-        #    tar.add(f"./tmp/stats_{RUN_ID}.csv", arcname="stats.csv")
-        #    #add config
-        #    blob = STORAGE_CLIENT.bucket(TMP_BUCKET).blob(f"config_{RUN_ID}.yml")
-        #    #tar.add(f"./tmp/config_{RUN_ID}.yml", arcname="config.yml")
-        #    tar.add(blob.download_as_bytes(f"./tmp/config_{RUN_ID}.yml").decode("utf-8"),arcname="config.yml")
-        #    #add model object
-        #    if not mode:
-        #        blob = STORAGE_CLIENT.bucket(TMP_BUCKET).blob(f"trained_model_{RUN_ID}.hd5")
-        #        blob.download_to_filename(f"./tmp/{run_name}_trained_model_{RUN_ID}.hd5")
-        #        tar.add(f"./tmp/{run_name}_trained_model_{RUN_ID}.hd5", arcname=f"{run_name}_trained_model.hd5")
-        #    #add data
-        #    for i in DATASET_TITLES:
-        #        blob = STORAGE_CLIENT.bucket(TMP_BUCKET).blob(f"{i}_{RUN_ID}.txt")
-        #        blob.download_to_filename(f"./tmp/{i}_{RUN_ID}.hd5")
-        #        tar.add(f"./tmp/{i}_{RUN_ID}.txt", arcname=f"{i}.txt")
-
-        #print(os.path.isfile("./tmp/data.tar.gz"))
-
-        #save tarball to cloud
-        #blob = STORAGE_CLIENT.bucket(TMP_BUCKET).blob(f'data_{RUN_ID}.tar.gz')
-        #with open("./tmp/data.tar.gz", 'rb') as f:
-        #    blob.upload_from_file(f) #"./tmp/data.tar.gz"
-
-        #return dcc.send_file(f"./tmp/{RUN_ID}_data.tar.gz")
-
-
-
 @app.callback(
     Output('alert-model-run-processing-fail','is_open'),
      Output('alert-model-run-ds-fail','is_open'),
@@ -262,10 +243,6 @@ def download_results(n_clicks,run_name,mode):
      Output('artifacts-out', 'children'),
      Output('download-out', 'children'),
      Output('upload-out', 'children'),
-     #Output('output-data', 'value'),
-     #Output('artifacts', 'value'),
-     #Output('artifacts', 'value'),
-     #Output('stats', 'value'),
      Input('run-button', 'n_clicks'),
      State('toggle-mode', 'value'),
      State('model-select', 'value'),
@@ -472,6 +449,32 @@ def datasets_to_gcp(filename,contents):
         return success,not success
     else:
         return False,False
+
+#similar to the one below,
+
+@app.callback(
+    Output("model-upload-from-session-success", "is_open"),
+    Output("model-upload-from-session-failure", "is_open"),
+    Input('btn-upload-model', 'n_clicks'),
+    State('run-name',"value")
+)
+def trained_model_publish(n_clicks,run_name):
+
+    #later may want to define try / or failure condition
+
+    if n_clicks is not None:
+        if run_name is None:
+            return False,True
+        # TODO check for unique
+        #TODO check for disallowed characters
+        elif False:
+            pass
+
+        blob = STORAGE_CLIENT.bucket(TMP_BUCKET).blob(f"trained_model_{RUN_ID}.hd5")
+
+        STORAGE_CLIENT.bucket(TMP_BUCKET).copy_blob(blob,STORAGE_CLIENT.bucket(DATA_BUCKET) , f'models/{run_name}.hd5')
+
+        return True,False
 
 @app.callback(
     Output("alert-model-success", "is_open"),
