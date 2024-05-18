@@ -161,8 +161,8 @@ html.Div(
              ],style={"display": "inline-block",'vertical-align': 'top','textAlign': 'center','marginRight': 200}),
         html.Div(
             [
-                    html.Div(id = "artifacts-out"),
-                    html.Div(id = "stats-out")
+                    html.Div(id="stats-out"),
+                    html.Div(id = "artifacts-out")
             ],style={"display": "inline-block",'vertical-align': 'top','textAlign': 'center','marginRight': 200}),
         html.Div(
                 [
@@ -215,7 +215,7 @@ def download_results(n_clicks,run_name,mode):
 
                 obj = io.BytesIO(blob.download_as_bytes())
                 obj.seek(0)
-                info = tarfile.TarInfo(name=f"{run_name}_trained_model.hd5")
+                info = tarfile.TarInfo(name=f"{[run_name if run_name is not None else RUN_ID][0]}_trained_model.hd5")
                 info.size = len(obj.getvalue())
                 tar.addfile(tarinfo=info, fileobj=obj)
 
