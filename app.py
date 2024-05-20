@@ -16,13 +16,17 @@ import plotly.graph_objects as go
 import time
 import base64
 
+#this should be an .env variable but too time pressed to rework variable passing in docker server
+GCP_PROJ="ggn-nmfs-afscftnirs-dev-97fc"
+
 external_stylesheets = [dbc.themes.BOOTSTRAP,'https://codepen.io/chriddyp/pen/bWLwgP.css']
 
 if os.getenv("HOSTIP") == None and os.getenv("APPPORT") == None:
     print("using app ip and port defaults")
     # code.interact(local=dict(globals(), **locals()))
     load_dotenv('./tmp/.env')
-STORAGE_CLIENT = storage.Client(project=os.getenv("GCP_PROJ"))
+#STORAGE_CLIENT = storage.Client(project=os.getenv("GCP_PROJ"))
+STORAGE_CLIENT = storage.Client(project=GCP_PROJ)
 DATA_BUCKET = os.getenv("DATA_BUCKET")
 TMP_BUCKET = os.getenv("TMP_BUCKET")
 
