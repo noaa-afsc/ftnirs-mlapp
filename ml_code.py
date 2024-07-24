@@ -2,35 +2,24 @@ import pandas as pd
 import numpy as np
 import tensorflow as tf
 import seaborn as sns
-import pyCompare 
+import pyCompare
 import matplotlib
 import keras_tuner as kt
 
-from sklearn.preprocessing import StandardScaler, MinMaxScaler, OneHotEncoder
+from sklearn.preprocessing import StandardScaler, MinMaxScaler, OneHotEncoder, Normalizer, RobustScaler, MaxAbsScaler
 from yellowbrick.regressor import PredictionError, ResidualsPlot
 from matplotlib import pyplot as plt
-np.random.seed(42)
-tf.random.set_seed(42)
-from collections import Counter
 from scipy.signal import savgol_filter
-from sklearn.metrics import r2_score
-from sklearn.metrics import mean_squared_error
+from sklearn.metrics import r2_score, mean_squared_error
 from math import sqrt
 from keras_tuner.tuners import BayesianOptimization, Hyperband
 from tensorflow.keras.utils import plot_model
-from tensorflow.keras.layers import LeakyReLU
-from tensorflow.keras.layers import Input, Dense, Dropout, Flatten, Conv1D, MaxPooling1D, concatenate 
+from tensorflow.keras.layers import LeakyReLU, Input, Dense, Dropout, Flatten, Conv1D, MaxPooling1D, concatenate
 from tensorflow.keras.models import Model, load_model
 from tensorflow.keras.callbacks import ModelCheckpoint, EarlyStopping
 from tensorflow.keras import regularizers
 from tensorflow.keras.metrics import MeanSquaredError, MeanAbsoluteError
-from tensorflow.keras.models import load_model
 from tensorflow.keras.preprocessing.image import load_img, img_to_array
-
-from sklearn.preprocessing import MaxAbsScaler
-from sklearn.preprocessing import RobustScaler
-from sklearn.preprocessing import Normalizer
-
 from scipy.ndimage import uniform_filter1d, gaussian_filter1d, median_filter
 import pywt
 from sklearn.decomposition import PCA
@@ -40,37 +29,24 @@ import sys
 np.random.seed(42)
 tf.random.set_seed(42)
 
-sns.set(rc = {'figure.figsize': (10,6)})
-sns.set(style="whitegrid",font_scale = 2 )
+sns.set(rc={'figure.figsize': (10, 6)})
+sns.set(style="whitegrid", font_scale=2)
 
-# # Read and Clean Data
+# Read and Clean Data
 def read_and_clean_data(filepath, drop_outliers=True):
     data = pd.read_csv(filepath)
-
+    
     if drop_outliers:
-        data.drop(data[data['sample'] == 'outlier'].index, inplace=True)
+        data = data[data['sample'] != 'outlier']
     
     data.rename(columns={"final_age": "Age"}, inplace=True)
+    
     if data.isnull().values.any():
         raise ValueError("Data contains NaN values")
-    
-    X_train = data[data['sample'] == 'training']
-    X_test = data[data['sample'] == 'test']
-    
-    y_train = X_train.pop('Age')
-    y_test = X_test.pop('Age')
-    f_train = X_train.pop('file_name')
-    f_test = X_test.pop('file_name')
-    s_train = X_train.pop('sample')
-    s_test = X_test.pop('sample')
-    
-    X_train_A = X_train[X_train.columns[0:4]]
-    X_test_A = X_test[X_test.columns[0:4]]
-    X_train_B = X_train[X_train.columns[4:]]
-    X_test_B = X_test[X_test.columns[4:]]
-    
-    return data, X_train, X_test, y_train, y_test, f_train, f_test, s_train, s_test, X_train_A, X_test_A, X_train_B, X_test_B
 
+    print(data.head())
+    print(list(data.columns[0:10])) # ['file_name', 'sample', 'Age', 'latitude', 'length', 'gear_depth', 'gear_temp', 'wn11476.85064', 'wn11468.60577', 'wn11460.36091']
+    return data
 
 # Savitzky-Golay filter function
 def savgol_filter_func(data, window_length=17, polyorder=2, deriv=1):
@@ -114,7 +90,7 @@ def pca_filter_func(data, n_components=5):
     return pca.inverse_transform(transformed)
 
 # Main preprocessing function
-def preprocess_spectra(X_train_B, X_test_B, filter_type='savgol'):
+def preprocess_spectra(data, filter_type='savgol'):
     filter_functions = {
         'savgol': savgol_filter_func,
         'moving_average': moving_average_filter,
@@ -127,64 +103,35 @@ def preprocess_spectra(X_train_B, X_test_B, filter_type='savgol'):
     
     filter_func = filter_functions.get(filter_type, savgol_filter_func)
     
-    preprTR = filter_func(X_train_B.values)
-    preprTE = filter_func(X_test_B.values)
+    data.loc[data['sample'] == 'training', data.columns[4:]] = filter_func(data.loc[data['sample'] == 'training', data.columns[4:]].values)
+    data.loc[data['sample'] == 'test', data.columns[4:]] = filter_func(data.loc[data['sample'] == 'test', data.columns[4:]].values)
     
-    X_train_B = pd.DataFrame(preprTR, index=X_train_B.index, columns=X_train_B.columns)
-    X_test_B = pd.DataFrame(preprTE, index=X_test_B.index, columns=X_test_B.columns)
-    
-    return X_train_B, X_test_B
+    return data
 
-def apply_normalization(X_train_A, X_test_A):
+def apply_normalization(data, columns):
     normalizer = Normalizer()
-    X_train_A = pd.DataFrame(normalizer.transform(X_train_A), columns=X_train_A.columns)
-    X_test_A = pd.DataFrame(normalizer.transform(X_test_A), columns=X_test_A.columns)
-    
-    return X_train_A, X_test_A
+    data[columns] = normalizer.fit_transform(data[columns])
+    return data
 
-
-def apply_robust_scaling(X_train_A, X_test_A, y_train, y_test):
+def apply_robust_scaling(data, y_col, feature_columns):
     scaler_y = RobustScaler()
-    scaler_y.fit(y_train.values.reshape(-1, 1))
-    y_train = scaler_y.transform(y_train.values.reshape(-1, 1))
-    y_test = scaler_y.transform(y_test.values.reshape(-1, 1))
-    
-    scaler_x = RobustScaler()
-    scaler_x.fit(X_train_A)
-    X_train_A = pd.DataFrame(scaler_x.transform(X_train_A), columns=X_train_A.columns)
-    X_test_A = pd.DataFrame(scaler_x.transform(X_test_A), columns=X_test_A.columns)
-    
-    return X_train_A, X_test_A, y_train, y_test, scaler_y
+    data[y_col] = scaler_y.fit_transform(data[[y_col]])
+    data[feature_columns] = data[feature_columns].apply(lambda col: RobustScaler().fit_transform(col.values.reshape(-1, 1)))
+    return data, scaler_y
 
-
-def apply_minmax_scaling(X_train_A, X_test_A, y_train, y_test):
+def apply_minmax_scaling(data, y_col, feature_columns):
     scaler_y = MinMaxScaler()
-    scaler_y.fit(y_train.values.reshape(-1, 1))
-    y_train = scaler_y.transform(y_train.values.reshape(-1, 1))
-    y_test = scaler_y.transform(y_test.values.reshape(-1, 1))
-    
-    scaler_x = MinMaxScaler()
-    scaler_x.fit(X_train_A)
-    X_train_A = pd.DataFrame(scaler_x.transform(X_train_A), columns=X_train_A.columns)
-    X_test_A = pd.DataFrame(scaler_x.transform(X_test_A), columns=X_test_A.columns)
-    
-    return X_train_A, X_test_A, y_train, y_test, scaler_y
+    data[y_col] = scaler_y.fit_transform(data[[y_col]])
+    data[feature_columns] = data[feature_columns].apply(lambda col: MinMaxScaler().fit_transform(col.values.reshape(-1, 1)))
+    return data, scaler_y
 
-
-def apply_maxabs_scaling(X_train_A, X_test_A, y_train, y_test):
+def apply_maxabs_scaling(data, y_col, feature_columns):
     scaler_y = MaxAbsScaler()
-    scaler_y.fit(y_train.values.reshape(-1, 1))
-    y_train = scaler_y.transform(y_train.values.reshape(-1, 1))
-    y_test = scaler_y.transform(y_test.values.reshape(-1, 1))
-    
-    scaler_x = MaxAbsScaler()
-    scaler_x.fit(X_train_A)
-    X_train_A = pd.DataFrame(scaler_x.transform(X_train_A), columns=X_train_A.columns)
-    X_test_A = pd.DataFrame(scaler_x.transform(X_test_A), columns=X_test_A.columns)
-    
-    return X_train_A, X_test_A, y_train, y_test, scaler_y
+    data[y_col] = scaler_y.fit_transform(data[[y_col]])
+    data[feature_columns] = data[feature_columns].apply(lambda col: MaxAbsScaler().fit_transform(col.values.reshape(-1, 1)))
+    return data, scaler_y
 
-def apply_scaling(X_train_A, X_test_A, y_train, y_test, scaling_method='standard'):
+def apply_scaling(data, scaling_method='standard', y_col='Age'):
     scalers = {
         'standard': StandardScaler(),
         'minmax': MinMaxScaler(),
@@ -196,21 +143,18 @@ def apply_scaling(X_train_A, X_test_A, y_train, y_test, scaling_method='standard
     if scaling_method not in scalers:
         raise ValueError(f"Unsupported scaling method: {scaling_method}")
     
+    feature_columns = data.columns.difference(['sample', 'file_name', y_col])
+
     if scaling_method == 'normalize':
-        X_train_A, X_test_A = apply_normalization(X_train_A, X_test_A)
-        return X_train_A, X_test_A, y_train, y_test, None  
+        data = apply_normalization(data, feature_columns)
+        return data, None  
     
     scaler_y = scalers[scaling_method]
-    scaler_y.fit(y_train.values.reshape(-1, 1))
-    y_train = scaler_y.transform(y_train.values.reshape(-1, 1))
-    y_test = scaler_y.transform(y_test.values.reshape(-1, 1))
-    
+    data[y_col] = scaler_y.fit_transform(data[[y_col]])
     scaler_x = scalers[scaling_method]
-    scaler_x.fit(X_train_A)
-    X_train_A = pd.DataFrame(scaler_x.transform(X_train_A), columns=X_train_A.columns)
-    X_test_A = pd.DataFrame(scaler_x.transform(X_test_A), columns=X_test_A.columns)
+    data[feature_columns] = scaler_x.fit_transform(data[feature_columns])
     
-    return X_train_A, X_test_A, y_train, y_test, scaler_y
+    return data, scaler_y
 
 def build_model(hp, input_dim_A, input_dim_B):
     input_A = Input(shape=(input_dim_A,))
@@ -244,7 +188,7 @@ def build_model(hp, input_dim_A, input_dim_B):
     y = Flatten()(y)
     y = Dense(4, activation="relu", name='output_B')(y)
 
-    con = concatenate([x, y])  # Corrected concatenate usage
+    con = concatenate([x, y])
 
     z = Dense(
         hp.Int('dense', 4, 640, step=32, default=256),
@@ -256,13 +200,16 @@ def build_model(hp, input_dim_A, input_dim_B):
     model.compile(optimizer='adam', loss='mse', metrics=['mse', 'mae'])
     return model
 
-
-def train_and_optimize_model(tuner, X_train_A, X_train_B, y_train, nb_epoch, batch_size):
+def train_and_optimize_model(tuner, data, nb_epoch, batch_size):
     outputFilePath = 'Estimator'
     checkpointer = ModelCheckpoint(filepath=outputFilePath, verbose=1, save_best_only=True)
     earlystop = EarlyStopping(monitor='val_loss', patience=7, verbose=1, restore_best_weights=True)
 
-    tuner.search([X_train_A, X_train_B], y_train,
+    X_train_biological_data = data.loc[data['sample'] == 'training', data.columns[4:8]]
+    X_train_wavenumbers = data.loc[data['sample'] == 'training', data.columns[8:]]
+    y_train = data.loc[data['sample'] == 'training', 'Age']
+
+    tuner.search([X_train_biological_data, X_train_wavenumbers], y_train,
                  epochs=nb_epoch,
                  batch_size=batch_size,
                  shuffle=True,
@@ -275,12 +222,16 @@ def train_and_optimize_model(tuner, X_train_A, X_train_B, y_train, nb_epoch, bat
 
     return model, best_hp
 
-def final_training_pass(model, X_train_A, X_train_B, y_train, nb_epoch, batch_size):
+def final_training_pass(model, data, nb_epoch, batch_size):
     outputFilePath = 'Estimator'
     checkpointer = ModelCheckpoint(filepath=outputFilePath, verbose=1, save_best_only=True)
     earlystop = EarlyStopping(monitor='val_loss', patience=100, verbose=1, restore_best_weights=True)
 
-    history = model.fit([X_train_A, X_train_B], y_train,
+    X_train_biological_data = data.loc[data['sample'] == 'training', data.columns[4:8]]
+    X_train_wavenumbers = data.loc[data['sample'] == 'training', data.columns[8:]]
+    y_train = data.loc[data['sample'] == 'training', 'Age']
+
+    history = model.fit([X_train_biological_data, X_train_wavenumbers], y_train,
                         epochs=nb_epoch,
                         batch_size=batch_size,
                         shuffle=True,
@@ -300,13 +251,15 @@ def plot_training_history(history):
     plt.legend(['Train', 'Validation'], loc='upper right')
     plt.show()
 
+def evaluate_model(model, data):
+    X_test_biological_data = data.loc[data['sample'] == 'test', data.columns[4:8]]
+    X_test_wavenumbers = data.loc[data['sample'] == 'test', data.columns[8:]]
+    y_test = data.loc[data['sample'] == 'test', 'Age']
 
-def evaluate_model(model, X_test_A, X_test_B, y_test):
-    evaluation = model.evaluate([X_test_A, X_test_B], y_test)
-    preds = model.predict([X_test_A, X_test_B])
+    evaluation = model.evaluate([X_test_biological_data, X_test_wavenumbers], y_test)
+    preds = model.predict([X_test_biological_data, X_test_wavenumbers])
     r2 = r2_score(y_test, preds)
     return evaluation, preds, r2
-
 
 def plot_predictions(y_test, preds):
     plt.figure(figsize=(6, 6))
@@ -320,12 +273,8 @@ def plot_predictions(y_test, preds):
     plt.show()
 
 def plot_prediction_error(preds, y_test):
-    # Ensure preds is a numpy array
     preds = np.array(preds).flatten()
-    
-    # Convert y_test to a numpy array and flatten it
     y_test = y_test.to_numpy().flatten()
-    
     error = preds - y_test
 
     plt.figure(figsize=(6, 6))
@@ -334,38 +283,31 @@ def plot_prediction_error(preds, y_test):
     plt.ylabel('Count')
     plt.show()
 
+def evaluate_training_set(model, data, scaler_y):
+    X_train_biological_data = data.loc[data['sample'] == 'training', data.columns[4:8]]
+    X_train_wavenumbers = data.loc[data['sample'] == 'training', data.columns[8:]]
+    y_train = data.loc[data['sample'] == 'training', 'Age']
+    f_train = data.loc[data['sample'] == 'training', 'file_name']
 
-def evaluate_training_set(model, X_train_A, X_train_B, y_train, scaler_y, f_train):
-
-    
     y_train = np.array(y_train).reshape(-1, 1)
-
-    preds_t = model.predict([X_train_A, X_train_B])
+    preds_t = model.predict([X_train_biological_data, X_train_wavenumbers])
     
-    # Ensure preds_t and y_train have the right shape for inverse transform
     preds_t = preds_t.reshape(-1, 1)
     y_train_reshaped = y_train.reshape(-1, 1)
     
-    # Inverse transform the predictions and true values
     y_pr_transformed = scaler_y.inverse_transform(preds_t)
     y_tr_transformed = scaler_y.inverse_transform(y_train_reshaped)
 
-    # Calculate r-squared and RMSE
     r_squared_tr = r2_score(y_tr_transformed, y_pr_transformed)
     rmse_tr = sqrt(mean_squared_error(y_tr_transformed, y_pr_transformed))
 
-    # Create DataFrame for predictions and true values
     y_tr_df = pd.DataFrame(y_tr_transformed, columns=['train'])
     y_tr_df['pred'] = y_pr_transformed
-    f_train_reset = f_train.reset_index(drop=True)
-    y_tr_df['file'] = f_train_reset
+    y_tr_df['file'] = f_train.reset_index(drop=True)
 
-    # Save predictions to CSV
     y_tr_df.to_csv('./Output/Data/train_predictions.csv', index=False)
 
     return r_squared_tr, rmse_tr, y_tr_df
-
-
 
 def plot_training_set(y_tr_transformed, y_pr_transformed):
     sns.set_style("white")
@@ -411,75 +353,6 @@ def plot_bland_altman(y_test_transformed, y_pred_transformed):
                           title='Bland-Altman Plot\n',
                           savePath='./Output/Figures/BlandAltman.png')
 
-
-
-def TrainingModeWithHyperband(filepath, filter_CHOICE, scaling_CHOICE):
-    data, X_train, X_test, y_train, y_test, f_train, f_test, s_train, s_test, X_train_A, X_test_A, X_train_B, X_test_B = read_and_clean_data(filepath)
-    
-    X_train_B, X_test_B = preprocess_spectra(X_train_B, X_test_B, filter_type=filter_CHOICE)
-    
-
-    scaling_method = scaling_CHOICE  # 'minmax', 'standard', 'maxabs', 'robust', or 'normalize' 
-    X_train_scaled, X_test_scaled, y_train_scaled, y_test_scaled, scaler_y = apply_scaling(X_train_A, X_test_A, y_train, y_test, scaling_method)
-    
-    input_dim_A = X_train_A.shape[1]
-    input_dim_B = X_train_B.shape[1]
-    
-    def model_builder(hp):
-        return build_model(hp, input_dim_A, input_dim_B)
-    
-    tuner = Hyperband(
-        model_builder,
-        objective='val_loss',
-        max_epochs=1, # !@! 
-        directory='Tuners',
-        project_name='mmcnn',
-        seed=42
-    )
-    
-    print(tuner.search_space_summary())
-    
-    nb_epoch = 200
-    batch_size = 32
-    model, best_hp = train_and_optimize_model(tuner, X_train_A, X_train_B, y_train, nb_epoch, batch_size)
-    
-    nb_epoch = 2000
-    batch_size = 32
-    history = final_training_pass(model, X_train_A, X_train_B, y_train, nb_epoch, batch_size)
-    
-    plot_training_history(history)
-    
-    evaluation, preds, r2 = evaluate_model(model, X_test_A, X_test_B, y_test)
-    print(f"Evaluation: {evaluation}, R2: {r2}")
-    
-    plot_predictions(y_test, preds)
-    plot_prediction_error(preds, y_test)
-    
-    model.summary()
-
-    # plot_model(model, show_shapes=True)
-    
-    # r_squared_tr, rmse_tr, y_tr_df = evaluate_training_set(model, X_train_A, X_train_B, y_train, scaler_y, f_train)
-    # print(f"Training R2: {r_squared_tr}, RMSE: {rmse_tr}")
-    
-    # plot_training_set(y_tr_df['train'], y_tr_df['pred'])
-    
-    # y_pred_transformed = scaler_y.inverse_transform(preds.reshape(-1, 1))
-    # y_test_transformed = scaler_y.inverse_transform(y_test.reshape(-1, 1))
-    
-    # r_squared = r2_score(y_test_transformed, y_pred_transformed)
-    # rmse = sqrt(mean_squared_error(y_test_transformed, y_pred_transformed))
-    # print(f"Test R2: {r_squared}, RMSE: {rmse}")
-    
-    # y_test_df = pd.DataFrame(y_test_transformed, columns=['test'])
-    # y_test_df['pred'] = y_pred_transformed
-    # f_test_reset = f_test.reset_index(drop=True)
-    # y_test_df['file'] = f_test_reset
-    # y_test_df.to_csv('./Output/Data/test_predictions.csv', index=False)
-    
-    # plot_test_set(y_test_transformed, y_pred_transformed)
-    # plot_bland_altman(y_test_transformed, y_pred_transformed)
-
 def build_model_manual(input_dim_A, input_dim_B, num_conv_layers, kernel_size, stride_size, dropout_rate, use_max_pooling, num_filters, dense_units, dropout_rate_2):
     input_A = Input(shape=(input_dim_A,))
     x = input_A
@@ -494,7 +367,6 @@ def build_model_manual(input_dim_A, input_dim_B, num_conv_layers, kernel_size, s
             activation='relu',
             padding='same')(y)
         
-        # Ensure the input size is appropriate for max pooling
         if use_max_pooling and y.shape[1] > 1:
             y = MaxPooling1D(pool_size=2)(y)
         
@@ -503,7 +375,7 @@ def build_model_manual(input_dim_A, input_dim_B, num_conv_layers, kernel_size, s
     y = Flatten()(y)
     y = Dense(4, activation="relu", name='output_B')(y)
 
-    con = concatenate([x, y])  # Corrected concatenate usage
+    con = concatenate([x, y])
 
     z = Dense(dense_units, activation='relu')(con)
     z = Dropout(dropout_rate_2)(z)
@@ -513,17 +385,93 @@ def build_model_manual(input_dim_A, input_dim_B, num_conv_layers, kernel_size, s
     model.compile(optimizer='adam', loss='mse', metrics=['mse', 'mae'])
     return model
 
+def InferenceMode(model_path, image_path):
+    model = load_model(model_path)
+    
+    img = load_img(image_path, target_size=(224, 224))
+    img_array = img_to_array(img)
+    img_array = np.expand_dims(img_array, axis=0)
+    img_array /= 255.0
 
-def TrainingModeWithoutHyperband(filepath, num_conv_layers, kernel_size, stride_size, dropout_rate, use_max_pooling, num_filters, dense_units, dropout_rate_2, filter_CHOICE, scaling_CHOICE):
-    data, X_train, X_test, y_train, y_test, f_train, f_test, s_train, s_test, X_train_A, X_test_A, X_train_B, X_test_B = read_and_clean_data(filepath)
+    predictions = model.predict(img_array)
+
+    return predictions
+
+def TrainingModeWithHyperband(filepath, filter_CHOICE, scaling_CHOICE):
+    data = read_and_clean_data(filepath)
     
-    X_train_B, X_test_B = preprocess_spectra(X_train_B, X_test_B, filter_type=filter_CHOICE)
+    data = preprocess_spectra(data, filter_type=filter_CHOICE)
     
+    y_col = 'Age'
     scaling_method = scaling_CHOICE  # 'minmax', 'standard', 'maxabs', 'robust', or 'normalize'
-    X_train_scaled, X_test_scaled, y_train_scaled, y_test_scaled, scaler_y = apply_scaling(X_train_A, X_test_A, y_train, y_test, scaling_method)
+    data, scaler_y = apply_scaling(data, scaling_method, y_col)
+
+    input_dim_A = data.columns[4:8].shape[0]
+    input_dim_B = data.columns[8:].shape[0]
     
-    input_dim_A = X_train_A.shape[1]
-    input_dim_B = X_train_B.shape[1]
+    def model_builder(hp):
+        return build_model(hp, input_dim_A, input_dim_B)
+    
+    tuner = Hyperband(
+        model_builder,
+        objective='val_loss',
+        max_epochs=1,
+        directory='Tuners',
+        project_name='mmcnn',
+        seed=42
+    )
+    
+    print(tuner.search_space_summary())
+    
+    nb_epoch = 1  # !@!
+    batch_size = 32
+    model, best_hp = train_and_optimize_model(tuner, data, nb_epoch, batch_size)
+    
+    nb_epoch = 1  # !@!
+    batch_size = 32
+    history = final_training_pass(model, data, nb_epoch, batch_size)
+    
+    evaluation, preds, r2 = evaluate_model(model, data)
+    print(f"Evaluation: {evaluation}, R2: {r2}")
+    
+    model.summary()
+    
+    training_outputs = {
+        'trained_model': model,
+        'training_history': history,
+        'evaluation': evaluation,
+        'predictions': preds,
+        'r2_score': r2
+    }
+    
+    top_5_models = tuner.get_best_models(num_models=5)
+    
+    additional_outputs = {
+        'top5models': top_5_models
+    }
+    
+    return training_outputs, additional_outputs
+
+
+def TrainingModeWithoutHyperband(filepath, filter_CHOICE, scaling_CHOICE, hyperband_parameters):
+    if len(hyperband_parameters) != 8:
+        raise ValueError("hyperband_parameters must be a list of 8 values.")
+    
+    num_conv_layers, kernel_size, stride_size, dropout_rate, use_max_pooling, num_filters, dense_units, dropout_rate_2 = hyperband_parameters
+    
+    if not all(isinstance(param, (int, float, bool)) for param in hyperband_parameters):
+        raise ValueError("All hyperband parameters must be either int, float, or bool.")
+    
+    data = read_and_clean_data(filepath)
+    
+    data = preprocess_spectra(data, filter_type=filter_CHOICE)
+    
+    y_col = 'Age'
+    scaling_method = scaling_CHOICE  # 'minmax', 'standard', 'maxabs', 'robust', or 'normalize'
+    data, scaler_y = apply_scaling(data, scaling_method, y_col)
+
+    input_dim_A = data.columns[4:8].shape[0]
+    input_dim_B = data.columns[8:].shape[0]
 
     model = build_model_manual(
         input_dim_A,
@@ -538,75 +486,52 @@ def TrainingModeWithoutHyperband(filepath, num_conv_layers, kernel_size, stride_
         dropout_rate_2
     )
     
-    nb_epoch = 200
+    nb_epoch = 1  # !@!
     batch_size = 32
-    history = final_training_pass(model, X_train_A, X_train_B, y_train, nb_epoch, batch_size)
+    history = final_training_pass(model, data, nb_epoch, batch_size)
     
-    plot_training_history(history)
-    
-    evaluation, preds, r2 = evaluate_model(model, X_test_A, X_test_B, y_test)
+    evaluation, preds, r2 = evaluate_model(model, data)
     print(f"Evaluation: {evaluation}, R2: {r2}")
     
-    plot_predictions(y_test, preds)
-    plot_prediction_error(preds, y_test)
-    
     model.summary()
-
-
-
-def InferenceMode(model_path, image_path):
-    # Load the model from the given path
-    model = load_model(model_path)
     
-    # Load and preprocess the image
-    img = load_img(image_path, target_size=(224, 224))  # Adjust target size according to your model's input size
-    img_array = img_to_array(img)
-    img_array = np.expand_dims(img_array, axis=0)
-    img_array /= 255.0  # Normalize the image array
-
-    # Run inference
-    predictions = model.predict(img_array)
-
-    return predictions
+    training_outputs = {
+        'trained_model': model,
+        'training_history': history,
+        'evaluation': evaluation,
+        'predictions': preds,
+        'r2_score': r2
+    }
+    
+    additional_outputs = {
+        
+    }
+    
+    return training_outputs, additional_outputs
 
 
 def main():
-
-    TrainingModeWithHyperband(
+    training_outputs_hyperband, additional_outputs_hyperband = TrainingModeWithHyperband(
         filepath='./Data/AGP_MMCNN_BSsurvey_pollock2014to2018.csv',
-        filter_CHOICE='savgol',
-        scaling_CHOICE='minmax'
-
-        # can set hyperparameter ranges?
-        # make it optional
-        # only allow certain parameters and constrain the search space...
-    
-    )
-
-    TrainingModeWithoutHyperband(
-        filepath='./Data/AGP_MMCNN_BSsurvey_pollock2014to2018.csv',
-        num_conv_layers=2,
-        kernel_size=101,
-        stride_size=51,
-        dropout_rate=0.1,
-        use_max_pooling=False,
-        num_filters=50,
-        dense_units=256,
-        dropout_rate_2=0.1,
         filter_CHOICE='savgol',
         scaling_CHOICE='minmax'
     )
 
-    inference_output = InferenceMode(model_path = '', image_path = '')
+    training_outputs_manual, additional_outputs_manual = TrainingModeWithoutHyperband(
+        filepath='./Data/AGP_MMCNN_BSsurvey_pollock2014to2018.csv',
+        filter_CHOICE='savgol',
+        scaling_CHOICE='minmax',
+        hyperband_parameters=[2, 101, 51, 0.1, False, 50, 256, 0.1]
+    )
 
-    # put acceptable ranges for size variables and enums for enum variables...
-    # just put in comments
+    # Use the outputs as needed
+    print(training_outputs_hyperband)
+    print(additional_outputs_hyperband)
+    print(training_outputs_manual)
+    print(additional_outputs_manual)
 
-    # have functions read from in memory object rather than filepath
+    # inference_output = InferenceMode(model_path='', image_path='')
 
-
-
-   
 
 if __name__ == "__main__":
     main()
