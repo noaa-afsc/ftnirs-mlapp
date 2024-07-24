@@ -24,6 +24,8 @@ from scipy.ndimage import uniform_filter1d, gaussian_filter1d, median_filter
 import pywt
 from sklearn.decomposition import PCA
 import sys
+from io import StringIO
+
 
 # Set seeds for reproducibility
 np.random.seed(42)
@@ -32,9 +34,13 @@ tf.random.set_seed(42)
 sns.set(rc={'figure.figsize': (10, 6)})
 sns.set(style="whitegrid", font_scale=2)
 
-# Read and Clean Data
-def read_and_clean_data(filepath, drop_outliers=True):
-    data = pd.read_csv(filepath)
+def read_and_clean_data(data_source, drop_outliers=True):
+    if isinstance(data_source, str):
+        data = pd.read_csv(data_source)
+    elif isinstance(data_source, StringIO):
+        data = pd.read_csv(data_source)
+    else:
+        raise ValueError("data_source must be a file path (str) or a StringIO object.")
     
     if drop_outliers:
         data = data[data['sample'] != 'outlier']
@@ -45,7 +51,7 @@ def read_and_clean_data(filepath, drop_outliers=True):
         raise ValueError("Data contains NaN values")
 
     print(data.head())
-    print(list(data.columns[0:10])) # ['file_name', 'sample', 'Age', 'latitude', 'length', 'gear_depth', 'gear_temp', 'wn11476.85064', 'wn11468.60577', 'wn11460.36091']
+    print(list(data.columns[0:10]))  # ['file_name', 'sample', 'Age', 'latitude', 'length', 'gear_depth', 'gear_temp', 'wn11476.85064', 'wn11468.60577', 'wn11460.36091']
     return data
 
 # Savitzky-Golay filter function
