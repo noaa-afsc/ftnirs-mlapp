@@ -5,6 +5,8 @@ import seaborn as sns
 import pyCompare
 import matplotlib
 import keras_tuner as kt
+import h5py
+
 
 from sklearn.preprocessing import StandardScaler, MinMaxScaler, OneHotEncoder, Normalizer, RobustScaler, MaxAbsScaler
 from yellowbrick.regressor import PredictionError, ResidualsPlot
@@ -391,17 +393,34 @@ def build_model_manual(input_dim_A, input_dim_B, num_conv_layers, kernel_size, s
     model.compile(optimizer='adam', loss='mse', metrics=['mse', 'mae'])
     return model
 
-def InferenceMode(model_path, image_path):
-    model = load_model(model_path)
+def InferenceMode(model_or_path, data, row_number, scaler_y=None, scaler_x=None):
+    if isinstance(model_or_path, str):
+        # Load model from disk
+        model = load_model(model_or_path)
+    else:
+        # Use the provided model object
+        model = model_or_path
     
-    img = load_img(image_path, target_size=(224, 224))
-    img_array = img_to_array(img)
-    img_array = np.expand_dims(img_array, axis=0)
-    img_array /= 255.0
-
-    predictions = model.predict(img_array)
-
-    return predictions
+    # Extract the specific row for inference
+    sample_data = data.iloc[row_number]
+    
+    # Extract biological and wavenumber data separately
+    biological_data = sample_data[data.columns[4:8]].values.reshape(1, -1)
+    wavenumber_data = sample_data[data.columns[8:]].values.reshape(1, -1, 1)
+    
+    # Apply the same scaling used during training
+    if scaler_x:
+        biological_data = scaler_x.transform(biological_data)
+        wavenumber_data = scaler_x.transform(wavenumber_data.reshape(1, -1)).reshape(1, -1, 1)
+    
+    # Run inference
+    prediction = model.predict([biological_data, wavenumber_data])
+    
+    # Inverse transform the prediction to original scale
+    if scaler_y:
+        prediction = scaler_y.inverse_transform(prediction)
+    
+    return prediction
 
 def TrainingModeWithHyperband(filepath, filter_CHOICE, scaling_CHOICE):
     data = read_and_clean_data(filepath)
@@ -444,29 +463,29 @@ def TrainingModeWithHyperband(filepath, filter_CHOICE, scaling_CHOICE):
     
     training_outputs = {
         'trained_model': model,
+        'scaler' : scaler_y,
         'training_history': history,
         'evaluation': evaluation,
         'predictions': preds,
         'r2_score': r2
     }
     
-    top_5_models = tuner.get_best_models(num_models=5)
+    # top_5_models = tuner.get_best_models(num_models=5)
     
     additional_outputs = {
-        'top5models': top_5_models
+        # 'top5models': top_5_models
     }
     
     return training_outputs, additional_outputs
 
-
-def TrainingModeWithoutHyperband(filepath, filter_CHOICE, scaling_CHOICE, hyperband_parameters):
-    if len(hyperband_parameters) != 8:
-        raise ValueError("hyperband_parameters must be a list of 8 values.")
+def TrainingModeWithoutHyperband(filepath, filter_CHOICE, scaling_CHOICE, model_parameters):
+    if len(model_parameters) != 8:
+        raise ValueError("model_parameters must be a list of 8 values.")
     
-    num_conv_layers, kernel_size, stride_size, dropout_rate, use_max_pooling, num_filters, dense_units, dropout_rate_2 = hyperband_parameters
+    num_conv_layers, kernel_size, stride_size, dropout_rate, use_max_pooling, num_filters, dense_units, dropout_rate_2 = model_parameters
     
-    if not all(isinstance(param, (int, float, bool)) for param in hyperband_parameters):
-        raise ValueError("All hyperband parameters must be either int, float, or bool.")
+    if not all(isinstance(param, (int, float, bool)) for param in model_parameters):
+        raise ValueError("All model parameters must be either int, float, or bool.")
     
     data = read_and_clean_data(filepath)
     
@@ -503,6 +522,7 @@ def TrainingModeWithoutHyperband(filepath, filter_CHOICE, scaling_CHOICE, hyperb
     
     training_outputs = {
         'trained_model': model,
+        'scaler': scaler_y,
         'training_history': history,
         'evaluation': evaluation,
         'predictions': preds,
@@ -516,6 +536,47 @@ def TrainingModeWithoutHyperband(filepath, filter_CHOICE, scaling_CHOICE, hyperb
     return training_outputs, additional_outputs
 
 
+def saveModel(model, path):
+    model.save(path)
+    print(f"Model saved to {path}")
+
+
+def saveModelWithMetadata(model, path, column_names, description):
+
+    # Save the Keras model
+    model.save(path)
+    print(f"Model saved to {path}")
+
+    # Append metadata to the HDF5 file
+    with h5py.File(path, 'a') as f:
+        # Create a group for metadata if it doesn't exist
+        if 'metadata' not in f:
+            metadata_group = f.create_group('metadata')
+        else:
+            metadata_group = f['metadata']
+
+        # Add the column names list
+        if 'column_names' in metadata_group:
+            del metadata_group['column_names']  # Delete if exists to avoid duplication
+        metadata_group.create_dataset('column_names', data=column_names)
+        
+        # Add the description string
+        if 'description' in metadata_group:
+            del metadata_group['description']  # Delete if exists to avoid duplication
+        metadata_group.create_dataset('description', data=description)
+        
+    print(f"Metadata added to {path}")
+
+def loadModelMetadata(path):
+
+    with h5py.File(path, 'r') as f:
+        metadata_group = f['metadata']
+        column_names = list(metadata_group['column_names'])
+        description = metadata_group['description'][()].decode('utf-8')
+
+    return column_names, description
+
+
 def main():
     training_outputs_hyperband, additional_outputs_hyperband = TrainingModeWithHyperband(
         filepath='./Data/AGP_MMCNN_BSsurvey_pollock2014to2018.csv',
@@ -527,7 +588,7 @@ def main():
         filepath='./Data/AGP_MMCNN_BSsurvey_pollock2014to2018.csv',
         filter_CHOICE='savgol',
         scaling_CHOICE='minmax',
-        hyperband_parameters=[2, 101, 51, 0.1, False, 50, 256, 0.1]
+        model_parameters=[2, 101, 51, 0.1, False, 50, 256, 0.1]
     )
 
     # Use the outputs as needed
@@ -536,7 +597,23 @@ def main():
     print(training_outputs_manual)
     print(additional_outputs_manual)
 
-    # inference_output = InferenceMode(model_path='', image_path='')
+    model = training_outputs_hyperband['trained_model']
+
+    saveModel(model, "my_model.h5")
+
+
+    # prediction = InferenceMode(model, data, row_number=5, scaler_y=scaler_y, scaler_x=scaler_x)
+    # print(f"Prediction for row {row_number}: {prediction}")
+
+    column_names = ['col1', 'col2', 'col3']
+    description = 'This model is trained on data columns col1, col2, col3'
+    saveModelWithMetadata(model, 'my_model_with_metadata.h5', column_names, description)
+
+    # Example usage:
+    metadata_path = 'my_model_with_metadata.h5'
+    column_names, description = loadModelMetadata(metadata_path)
+    print(f"Column Names: {column_names}")
+    print(f"Description: {description}")
 
 
 if __name__ == "__main__":
