@@ -15,6 +15,7 @@ from google.cloud import storage
 import plotly.graph_objects as go
 import time
 import base64
+import h5py
 
 #this should be an .env variable but too time pressed to rework variable passing in docker server
 GCP_PROJ="ggn-nmfs-afscftnirs-dev-97fc"
@@ -127,18 +128,15 @@ app.layout = html.Div(id='parent', children=[
         html.Div(
     [
                 html.H2(id='H2_2', children='Select Mode',
-                    style={'textAlign': 'center','marginTop': 20}),
+                    style={'textAlign': 'center','marginTop': 20,'textAlign': 'left'}),
                 html.Hr(style={'marginBottom': 40}),
-                html.Div(
-                    [
-                        html.Div(id='toggle-mode-output',style = {"display": "inline-block",'textAlign': 'left','width': 200}),
-                        daq.ToggleSwitch(id='toggle-mode',
-                            value=True,
-                            style ={"display": "inline-block"}),
-                    ]),
-                dcc.Dropdown(id='model-select'),
-                dcc.Upload(id='upload-model',children=None,multiple=True)
-            ],style ={"display": "inline-block",'vertical-align': 'top','textAlign': 'center','marginRight': 200}),
+                dcc.Dropdown(id='mode-select', value="Training",clearable=False,
+                     options=["Training", "Inference", "Fine-tuning"],style={'width':200}),
+                html.Div(id='mode-select-output',style = {'textAlign': 'left'}),
+                dcc.Dropdown(id='model-select',style={'width':200}),
+                html.Div(id='model-select-output',style={'textAlign': 'left'}),
+                dcc.Upload(id='upload-model',children=None,multiple=True,style={'textAlign': 'left'})
+            ],style ={"display": "inline-block",'vertical-align': 'top','textAlign': 'center','width': 300,'marginRight':100,'height':450}),
 
         html.Div(
             [
@@ -214,7 +212,7 @@ def download_results(n_clicks,run_name,mode):
             tar.addfile(tarinfo=info, fileobj=obj)
 
             #add model object
-            if not mode:
+            if mode !="Inference":
                 blob = STORAGE_CLIENT.bucket(TMP_BUCKET).blob(f"trained_model_{RUN_ID}.hd5")
 
                 obj = io.BytesIO(blob.download_as_bytes())
@@ -248,7 +246,7 @@ def download_results(n_clicks,run_name,mode):
      Output('download-out', 'children'),
      Output('upload-out', 'children'),
      Input('run-button', 'n_clicks'),
-     State('toggle-mode', 'value'),
+     State('mode-select', 'value'),
      State('model-select', 'value'),
      State('dataset-select', 'value')
  )
@@ -322,7 +320,7 @@ def model_run_event(n_clicks,mode,model,datasets):
                                             dcc.Input(id='run-name', type="text", placeholder="my_unique_run_name",style={'textAlign': 'left', 'vertical-align': 'top', 'width': 400})
                                                                                 ],style={"display": "inline-block"}) if not mode else html.Div(id='run-name')] +\
                                        [html.Div(id='config-report-rc',children = "Run Configuration:"),
-                                       html.Div(id='config-report-mode', children="Mode: "+ ("Inference" if mode else "Training")),
+                                       html.Div(id='config-report-mode', children="Mode: "+ mode),
                                        html.Div(id='config-report-model',children="Model: " + model),
                                        html.Div(id='config-report-datasets',children ='Datasets: ')] +\
                                        [html.Div(id='config-report-datasets-' + i,children="- "+str(i),style={'marginLeft': 15}) for i in datasets] +\
@@ -358,12 +356,12 @@ def model_run_event(n_clicks,mode,model,datasets):
                             dash_table.DataTable(stats.to_dict('records')),
                         ],style={'textAlign': 'left', 'vertical-align': 'top','width': 400}) if not (processing_fail or any_error) else ""])
 
-        return [processing_fail,ds_fail,model_fail,message,config_out_payload,stats_out,artifacts_out,download_out,html.Button("Upload Trained model", id="btn-upload-model") if not mode and not (processing_fail or any_error) else ""]
+        return [processing_fail,ds_fail,model_fail,message,config_out_payload,stats_out,artifacts_out,download_out,html.Button("Upload Trained model", id="btn-upload-model") if mode != "Inference" and not (processing_fail or any_error) else ""]
 
 @app.callback(#Output('params-select', 'options'),
                     #Output('params-select', 'value'),
                     Output('params-holder', 'children'),
-                    Input('toggle-mode', 'value'),
+                    Input('mode-select', 'value'),
                     Input('model-select', 'value')
 )
 def get_parameters(mode,model):
@@ -373,8 +371,7 @@ def get_parameters(mode,model):
     PARAMS_DICT = {}
 
     if model is not None:
-        #inference
-        if mode:
+        if mode == 'Inference':
             #we will ideally want this to read properties of the model object itself to run this.
             #hopefully will not be particular to a certain model.
 
@@ -406,12 +403,12 @@ def get_parameters(mode,model):
 @app.callback(
     Output('model-select', 'options'),
     Output('upload-model', 'children'),
-    Input('toggle-mode', 'value'),
+    Input('mode-select', 'value'),
     Input('alert-model-success', 'is_open')
 )
-def update_model_checklist(inference,is_open):
+def update_model_checklist(mode,is_open):
 
-    if inference:
+    if mode != "Training":
         return get_models(),html.Button('Upload Trained Model(s)')
     else:
         return get_archetectures(),None
@@ -424,11 +421,80 @@ def update_data_checklist(is_open):
     return get_datasets()
 
 @app.callback(
-    Output('toggle-mode-output', 'children'),
-    Input('toggle-mode', 'value')
+    Output('mode-select-output', 'children'),
+    Input('mode-select', 'value')
 )
-def update_output(value):
-    return f'mode selected: {"INFERENCE" if value else "TRAINING"}'
+def update_output(mode):
+
+    if mode == "Training":
+        definition = "Train a model from scratch using a predefined modeling approach"
+    if mode == "Inference":
+        definition = "Predict ages without needing age information"
+    if mode == "Fine-tuning":
+        definition = "Select a pretrained model and fine-tune it for better performance on smaller datasets"
+    return definition
+
+def extract_metadata(file_object):
+
+    if 'metadata' not in file_object:
+        return None
+    else:
+        metadata = file_object['metadata']
+
+        # convert to pyton dict:
+
+        # common formatting may be desirable over below:
+        metadata = {key: (metadata[key][()].decode('utf-8') if metadata[key].shape == () else (', ').join(
+            [x.decode('utf-8') for x in list(metadata[key])])) for key in metadata}
+
+        return metadata
+def attach_metadata_to_blob(metadata,blob):
+
+    # declare the metdata on the object in cloud storage.
+    blob.metadata = metadata
+
+    blob.patch()
+
+def attach_null_metadata(blob):
+    # declare the metdata on the object in cloud storage.
+    blob.metadata = {"no_metadata":1}
+
+    blob.patch()
+
+@app.callback(
+    Output('model-select-output', 'children'),
+    Input('model-select', 'value'),
+    Input('mode-select', 'value')
+)
+def present_metadata(model,mode):
+
+    if mode == 'Training' or model == None:
+        return None
+
+    #extract metadata from GCP object, if available (lightest option)
+
+    blob = STORAGE_CLIENT.bucket(DATA_BUCKET).get_blob(f'models/{model}')
+
+    metadata = blob.metadata
+
+    if metadata == None:
+
+        #download object,
+        #look for metadata on object, register metadata on object in GCP for faster lookup next time
+
+        #and actually, will want to enforce the blob metadata at upload time
+        model_bytes = io.BytesIO(blob.download_as_bytes())
+        with h5py.File(model_bytes, 'r') as f:
+            metadata = extract_metadata(f)
+            if metadata is None:
+                attach_null_metadata(blob) #save the DL next time
+                return html.Div("File object missing metadata")
+            else:
+                attach_metadata_to_blob(metadata, blob)
+    elif 'no_metadata' in metadata and len(metadata)==1:
+        return html.Div("File object missing metadata")
+
+    return [html.Div(children=[html.Strong(str(key)),html.Span(f": {metadata[key]}")],style={'marginBottom': 10}) for key in metadata]
 
 @app.callback(
     Output("alert-dataset-success", "is_open"),
@@ -497,6 +563,18 @@ def models_to_gcp(filename, contents):
                 blob = STORAGE_CLIENT.bucket(DATA_BUCKET).blob(f'models/{i[0]}')
 
                 blob.upload_from_string(decoded, 'text/csv')
+
+                #for every piece of metadata, attach it to the cloud object as well for easy retrieval
+                with h5py.File(io.BytesIO(decoded), 'r') as f:
+                    metadata = extract_metadata(f)
+                    if metadata is not None:
+                        print('attaching metadata')
+                        attach_metadata_to_blob(metadata, blob)
+                    else:
+                        attach_null_metadata(blob)
+
+                #import code
+                #code.interact(local=dict(globals(), **locals()))
             else:
                 success = False
 
@@ -512,8 +590,11 @@ def data_check_datasets(data):
 
 def data_check_models(data):
 
-    if not ".hd5" == data[0][-4:]:
+    #check that it's the correct format (very casually)
+    if not ".hd5" == data[0][-4:] and not ".h5" == data[0][-3:] and not ".hdf5" == data[0][-5:]:
         return False
+
+    #check that it has the essential metadata fields
 
     return True
 
@@ -551,7 +632,7 @@ def run_model(mode,model,datasets):
 
     start = time.time()
 
-    if mode:
+    if mode=='Inference':
 
         data = [[rand.randint(1,15) for i in range(100)]]
         titles = ['Data: Ages'] #go.Scatter(x=list(range(len(data))), y=data)
@@ -568,6 +649,8 @@ def run_model(mode,model,datasets):
         stats = {'Accuracy':["{:.2f}".format(rand.randint(0,100)/100)],'Recall':["{:.2f}".format(rand.randint(0,100)/100)],'AUC':["{:.2f}".format(rand.randint(0,100)/100)],'time_elapsed':["{:.2f}".format(time.time() - start)]}
 
         #write out model object
+        #observation- be careful with lifecycle. Object is written to temp data, but for longer running jobs need to make sure the object
+        #will not be cycled from temp data prior to publication.
         blob = STORAGE_CLIENT.bucket(TMP_BUCKET).blob(f"trained_model_{RUN_ID}.hd5")
         blob.upload_from_string(pd.DataFrame([1,2,3]).to_csv(), 'text/csv')
 
