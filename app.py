@@ -1,3 +1,4 @@
+import csv
 import os
 import tarfile
 import io
@@ -16,6 +17,7 @@ import plotly.graph_objects as go
 import time
 import base64
 import h5py
+import standard_variable_names
 
 #this should be an .env variable but too time pressed to rework variable passing in docker server
 GCP_PROJ="ggn-nmfs-afscftnirs-dev-97fc"
@@ -499,26 +501,144 @@ def present_metadata(model,mode):
 @app.callback(
     Output("alert-dataset-success", "is_open"),
     Output("alert-dataset-fail", "is_open"),
+    Output("alert-dataset-fail", "children"),
+    Output("upload-ds", "contents"), #this output is workaround for known dcc.Upload bug where duplicate uploads don't trigger change.
     Input('upload-ds', 'filename'),Input('upload-ds', 'contents')
 )
 def datasets_to_gcp(filename,contents):
     success = True
+    message = "Dataset upload unsuccessful: did not pass standards checking"
     #this gets called by alert on startup as this is an output, make sure to not trigger alert in this case
     if not filename == None and not contents == None:
         for i in zip(filename,contents):
-            if data_check_datasets(i):
+            valid, message_out = data_check_datasets(i)
+            if message_out !="":
+                message = message + "; - " + message_out
+            if valid:
 
                 content_type, content_string = i[1].split(',')
                 decoded = base64.b64decode(content_string)
-                blob = STORAGE_CLIENT.bucket(DATA_BUCKET).blob(f'datasets/{i[0]}')
 
-                blob.upload_from_string(decoded, 'text/csv')
+                #assemble dataset metadata object.
+                #extract column names- interpret wav #s from other columns based on known rules.
+
+                #check that the dataset does not contain duplicated columns:
+
+                print('checking duplicate column names')
+
+                #avoid behavior of pandas to rename duplicate names
+                reader = csv.reader(io.StringIO(decoded.decode('utf-8')))
+                columns = next(reader)
+
+                print(columns)
+
+                #check that column names are unique
+                if len(columns) != len(set(columns)):
+                    success = False
+                    message = message + "; - " + f"columns must be uniquely named"
+
+                data = pd.read_csv(io.StringIO(decoded.decode('utf-8')))
+                print("loaded")
+
+                #along with parsing columns, rename the column metadata to 'standard' names. For example,
+                #the identifer field, no matter what it is called, will be replaced by id. Have an visual indicator
+                #for columns that cannot be matched to global naming.
+
+                #what I could do here- have a google sheet that matches global names to variable type, as well
+                #as known aliases. This can be referenced here, as well as for model behaviors like one-hot expansion
+                #of categorical variables.
+
+                #for now, let's just hardcode a dict. have it as a seperate file, 'standard_variables.py'
+
+                if 'metadata' in columns:
+                    pass
+                    #in this case, use provided info to extract the wave numbers by position. assume the wav numbers
+                    #to be the rightmost columns in consecutive order according to the metadata information.
+                elif any('wn' in c for c in columns):
+                    #in this case, use string matching to determine the wave numbers
+                    #use the values from the matched strings to arrive at the relevant variable values.
+                    matches = ['wn' in c for c in columns]
+
+                    wave_number_start_index = matches.index(True)
+                    wave_number_end_index = len(matches) - 1 - matches[::-1].index(True)
+
+                    a,b = columns[wave_number_start_index][2:],columns[wave_number_end_index][2:]
+                    #make the metadata terms for 'max' and 'min' come from # values instead of assuming low/high high/low ordering
+                    if float(a) > float(b):
+                        wave_number_max = a
+                        wave_number_min = b
+                    else:
+                        wave_number_max = b
+                        wave_number_min = a
+
+                    wave_number_step = (float(wave_number_max)-float(wave_number_min)) / (wave_number_end_index - wave_number_start_index)
+
+                    other_cols_start = 0 #assume this for now, but see if there are exeptions
+                    other_cols_end = wave_number_start_index - 1
+
+                    non_wave_columns = columns[other_cols_start:other_cols_end]
+                else:
+                    non_wave_columns = columns
+                    standard_cols = ["-1"]
+                    standard_cols_aliases = ["-1"]
+                    wave_number_start_index = ["-1"]
+                    wave_number_end_index = ["-1"]
+                    wave_number_min = ["-1"]
+                    wave_number_max =  ["-1"]
+                    wave_number_step = ["-1"]
+
+                #classify provided columns into standard and other columns:
+
+                standard_variable_names.DICT
+                standard_cols = []
+                standard_cols_aliases = []
+                other_cols = []
+
+                for f in non_wave_columns:
+                    if f in standard_variable_names.DICT:
+                        if f not in standard_cols:
+                            standard_cols.append(f)
+                            standard_cols_aliases.append(f)
+                        else:
+                            success = False
+                            message = message + "; - " + f"multiple columns refer to the same internal id: {f}"
+                    else:
+                        #match = [f in x[0] for x in [(standard_variable_names.DICT[p]['aliases'],p) for p in standard_variable_names.DICT]]
+                        match = [p for p in standard_variable_names.DICT if f in standard_variable_names.DICT[p]['aliases']]
+                        if len(match) > 1:
+                            success = False
+                            message = message + "; - " + f"column name {f} matched aliases for multiple standard names: issues is a duplicate alias in standard names dictionary, remedy there."
+                        elif len(match) > 0:
+                            if match[0] not in standard_cols:
+                                standard_cols.append(match[0])
+                                standard_cols_aliases.append(f)
+                            else:
+                                success = False
+                                message = message + "; - " + f"multiple columns refer to the same internal id: {match[0]}"
+                        else:
+                            other_cols.append(f)
+
+                #If wav numbers are absent in dataset, supply relevant metadata fields with -1
+                metadata = {"standard_columns":standard_cols,"standard_column_aliases":standard_cols_aliases,"other_columns":other_cols,"wave_number_start_index":wave_number_start_index,
+                            "wave_number_end_index":wave_number_end_index,"wave_number_min":wave_number_min,"wave_number_max":wave_number_max,"wave_number_step":wave_number_step}
+
+                if success:
+                    print('uploading')
+                    blob = STORAGE_CLIENT.bucket(DATA_BUCKET).blob(f'datasets/{i[0]}')
+
+                    blob.upload_from_string(decoded, 'text/csv')
+
+                    attach_metadata_to_blob(metadata,blob)
+
+                #import code
+                #code.interact(local=dict(globals(), **locals()))
+
             else:
                 success = False
 
-        return success,not success
+        return success,not success,message,None
     else:
-        return False,False
+        return False,False,"",None
 
 #similar to the one below,
 
@@ -573,8 +693,7 @@ def models_to_gcp(filename, contents):
                     else:
                         attach_null_metadata(blob)
 
-                #import code
-                #code.interact(local=dict(globals(), **locals()))
+
             else:
                 success = False
 
@@ -583,10 +702,12 @@ def models_to_gcp(filename, contents):
         return False, False
 def data_check_datasets(data):
 
-    if not ".csv" == data[0][-4:]:
-        return False
+    #to check - presence of duplicated rows (reject).
 
-    return True
+    if not ".csv" == data[0][-4:]:
+        return False,"data not named a csv"
+
+    return True,""
 
 def data_check_models(data):
 

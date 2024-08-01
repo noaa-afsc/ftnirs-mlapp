@@ -1,0 +1,24 @@
+#reflect the decisions made here:
+#as long as above is a up to date document.
+
+#alternatively, we could make this a google sheet for a little easier editing and fine grained
+#permissions.
+
+#placed in a seperate file to discourage accidental changes from editors of this to app.py
+
+#can not have alias duplicated between standard names. In this case, make one scientist change their naming.
+
+DICT = {'id':{'data_type':'unq_text','aliases':['File_name','file_name']},
+        'split':{'data_type':'int','aliases':['Sample','sample']},
+        'catch_time':{'data_type':'int','aliases':[]},
+        'sex':{'data_type':'categorical','aliases':[]},
+        'age':{'data_type':'numeric','aliases':['Final_age','final_age']},
+        'latitude':{'data_type':'numeric','aliases':['Latitude']},
+        'longitude':{'data_type':'numeric','aliases':['Longitude']},
+        'region': {'data_type': 'categorical', 'aliases': ['Region']},
+        'fish_length': {'data_type': 'numeric', 'aliases': ['Length','length']},
+        'fish_weight': {'data_type': 'numeric', 'aliases': ['weight']},
+        'otolith_weight': {'data_type': 'categorical', 'aliases': ['Otolith weight']},
+        'gear_depth': {'data_type': 'numeric', 'aliases': ['Gear_depth']},
+        'gear_temp': {'data_type': 'numeric', 'aliases': ['Gear_temp']},
+        }
