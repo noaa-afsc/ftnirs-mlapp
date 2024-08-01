@@ -181,7 +181,7 @@ html.Div(
     Output('download-results', "data"),
     Input('btn-download-results', 'n_clicks'),
     State('run-name','value'),
-    State('toggle-mode', 'value')
+    State('mode-select', 'value')
 )
 def download_results(n_clicks,run_name,mode):
 
@@ -235,6 +235,7 @@ def download_results(n_clicks,run_name,mode):
                 tar.addfile(tarinfo=info, fileobj=obj)
 
         tar_stream.seek(0)
+
         return dcc.send_bytes(tar_stream.getvalue(),f"{RUN_ID}_data.tar.gz")
 
 @app.callback(
@@ -320,7 +321,7 @@ def model_run_event(n_clicks,mode,model,datasets):
 
                 config_out_children = [html.Div(id='run-name-block',children =[html.Div(id='run-name-prompt',children = "Run name:"),
                                             dcc.Input(id='run-name', type="text", placeholder="my_unique_run_name",style={'textAlign': 'left', 'vertical-align': 'top', 'width': 400})
-                                                                                ],style={"display": "inline-block"}) if not mode else html.Div(id='run-name')] +\
+                                                                                ],style={"display": "inline-block"}) if mode!="Inference" else html.Div(id='run-name')] +\
                                        [html.Div(id='config-report-rc',children = "Run Configuration:"),
                                        html.Div(id='config-report-mode', children="Mode: "+ mode),
                                        html.Div(id='config-report-model',children="Model: " + model),
@@ -345,6 +346,8 @@ def model_run_event(n_clicks,mode,model,datasets):
                 message = "Run Failed: error while processing algorithm"
                 config_out_payload = [html.Div(id='error-title',children="ERROR:"),html.Div(id='error message',children =[str(e)])]
                 processing_fail = True
+        print(processing_fail)
+        print(any_error)
 
         download_out = [html.Div([html.Button("Download Results", id="btn-download-results"),
                     dcc.Download(id="download-results")]) if not (processing_fail or any_error) else ""]
@@ -390,7 +393,7 @@ def get_parameters(mode,model):
             if model == "michael_deeper_arch":
                 #return ["test"],[],dcc.Slider(0, 20, 5,value=10,id='test-conditional-component')
                 return [dcc.Checklist(id='checklist-params', options=["test"], value=[]),
-                        html.Div(id='var1-param-name',style={'textAlign': 'left'},children="var1"),
+                        html.Div(id='var1-param-name',style={'textAlign': 'left'},children="a_specific_param"),
                         dcc.Slider(0, 20, 5,value=10,id='var1-param')]
             elif model == "irina_og_arch":
                 #return ["on_GPU","other thing"],[],[]
@@ -680,6 +683,7 @@ def models_to_gcp(filename, contents):
 
                 content_type, content_string = i[1].split(',')
                 decoded = base64.b64decode(content_string)
+
                 blob = STORAGE_CLIENT.bucket(DATA_BUCKET).blob(f'models/{i[0]}')
 
                 blob.upload_from_string(decoded, 'text/csv')
@@ -692,7 +696,6 @@ def models_to_gcp(filename, contents):
                         attach_metadata_to_blob(metadata, blob)
                     else:
                         attach_null_metadata(blob)
-
 
             else:
                 success = False
@@ -711,8 +714,12 @@ def data_check_datasets(data):
 
 def data_check_models(data):
 
-    #check that it's the correct format (very casually)
+    #check that it's named correctly (very casually)
     if not ".hd5" == data[0][-4:] and not ".h5" == data[0][-3:] and not ".hdf5" == data[0][-5:]:
+        return False
+
+    #check its the correct type of file
+    if not h5py.is_hdf5(data[1]):
         return False
 
     #check that it has the essential metadata fields
@@ -730,18 +737,23 @@ def checklist_params_dict_pop(value,options,_):
 
     global PARAMS_DICT
 
+    print('in 2')
+
     out_dict = {i: (True if i in value else False) for i in options}
     for i in out_dict:
         PARAMS_DICT[i]= out_dict[i]
 
     print(PARAMS_DICT)
 @app.callback(Input('var1-param', 'value'),
+                    Input('var1-param-name', 'children'),
               Input('params-holder', 'children')
 )
-def checklist_params_dict_pop(value,_):
+def checklist_params_dict_pop(value,name,_):
     global PARAMS_DICT
 
-    PARAMS_DICT["var1"] = value
+    print('in 1')
+
+    PARAMS_DICT[name] = value
 
     print(PARAMS_DICT)
 
