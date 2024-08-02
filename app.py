@@ -17,7 +17,7 @@ import plotly.graph_objects as go
 import time
 import base64
 import h5py
-import standard_variable_names
+import app_data
 
 #this should be an .env variable but too time pressed to rework variable passing in docker server
 GCP_PROJ="ggn-nmfs-afscftnirs-dev-97fc"
@@ -33,10 +33,16 @@ STORAGE_CLIENT = storage.Client(project=GCP_PROJ)
 DATA_BUCKET = os.getenv("DATA_BUCKET")
 TMP_BUCKET = os.getenv("TMP_BUCKET")
 
-PARAMS_DICT = {} #global state of currently selected params.
-PARAMS_DICT_RUN = {} #global state of last run params.
+#refactor all of below into dcc.Store
 
-DATASET_TITLES = []
+#PARAMS_DICT = {} #global state of currently selected params.
+#PARAMS_DICT_RUN = {} #global state of last run params.
+
+#DATA_METADATA_DICT = {} #global metadata for datasets that have been selected
+
+#MODELS_METADATA_DICT = {} #global metadata for models that have been selected
+
+#DATASET_TITLES = []
 
 def get_objs():
     objs = list(STORAGE_CLIENT.list_blobs(DATA_BUCKET))
@@ -48,7 +54,7 @@ def get_datasets():
 def get_models():
     return [i[7:] for i in get_objs() if "models/" == i[:7]]
 def get_archetectures():
-    return ["michael_deeper_arch","irina_og_arch","new_exp_arch"]
+    return [i for i in app_data.TRAINING_APPROACHES]
 
 app = dash.Dash(__name__,requests_pathname_prefix ="/ftnirs_mlapp/",routes_pathname_prefix="/ftnirs_mlapp/" ,external_stylesheets=external_stylesheets)
 
@@ -112,12 +118,14 @@ app.layout = html.Div(id='parent', children=[
                 duration=4000)
         ]),
     html.Div(
-        [
+        [dcc.Store(id='params_dicts', storage_type='memory',data = {"params_dict":{},"params_dict_run":{}}),
+        dcc.Store(id='dataset_titles', storage_type='memory',data = {}),
+        dcc.Store(id='data_metadata_dict', storage_type='memory',data = {}),
+        dcc.Store(id='run_id', storage_type='memory'),
         html.Div(
     [
                 html.H2(id='H2_1', children='Select Datasets',
                     style={'textAlign': 'left', 'marginTop': 20}),
-                html.Hr(style={'marginBottom': 40}),
                 dcc.Checklist(id='dataset-select',
                     options=get_datasets(), # [9:]if f"datasets/" == i[:8]
                     value=[],style={'width':800}),
@@ -131,7 +139,6 @@ app.layout = html.Div(id='parent', children=[
     [
                 html.H2(id='H2_2', children='Select Mode',
                     style={'textAlign': 'center','marginTop': 20,'textAlign': 'left'}),
-                html.Hr(style={'marginBottom': 40}),
                 dcc.Dropdown(id='mode-select', value="Training",clearable=False,
                      options=["Training", "Inference", "Fine-tuning"],style={'width':200}),
                 html.Div(id='mode-select-output',style = {'textAlign': 'left'}),
@@ -144,19 +151,23 @@ app.layout = html.Div(id='parent', children=[
             [
                 html.H2(id='H2_3', children='Select Parameters',
                     style={'textAlign': 'center','marginTop': 20}),
-                html.Hr(style={'marginBottom': 40}),
                 html.Div(id = "params-holder"),
             ],style ={"display": "inline-block",'vertical-align': 'top','textAlign': 'right'}),
-        ]),
+        ]),html.Hr(style={'marginBottom': 40}),
+    html.Div(id='middle_row',children=[
 
-    html.Div(
-        [
-            html.Hr(style = {'marginTop': 50}),
-            html.Button('RUN',id="run-button"),
-            dcc.Loading(id='run-message',children=[]),
-            #html.Div(id='run-message',children=[]),
-            html.Hr()
-        ], style={'textAlign': 'center','vertical-align': 'top'}), #,'marginLeft': 650
+        html.Div(
+            [
+                html.H2(children='Data Columns',
+                        style={'textAlign': 'left'}),
+                html.Div(id="data-pane"),
+            ], style={"display": "inline-block", 'vertical-align': 'top', 'textAlign': 'left','width': 800,'marginRight': 200}),
+
+        html.Div(
+            [
+                html.Button('RUN',id="run-button"),
+                dcc.Loading(id='run-message',children=[])
+            ], style={'textAlign': 'center','vertical-align': 'top',"display": "inline-block"})]), #,'marginLeft': 650
 html.Div(
         [
         html.Div(
@@ -177,13 +188,85 @@ html.Div(
         ],style={"display": "inline-block",'vertical-align': 'top'})
 
 ])
+
+#possibly, could be issue with this where a dataset/model is reuploaded. To address this,
+#could make sure to clear the item during upload process, or, disallow overwritting.
+#there is an edge cases where a dataset could be uploaded through another mechanism, and match an exising name.
+#however, this will be solved by a refresh which should seem like a logical first troubleshoot to the user
+@app.callback(
+    Output('data_metadata_dict',"data", allow_duplicate=True),
+    Input('dataset-select','options'),
+    Input('dataset-select','value'),
+    State('data_metadata_dict',"data"),
+    prevent_initial_call=True
+)
+def update_data_metadata_dict(known_datasets,selected_datasets,data_metadata_dict):
+
+    kd_set = set(known_datasets)
+    dmd_set = set(data_metadata_dict)
+
+    excess_metadata = dmd_set.difference(kd_set)
+    if len(excess_metadata) > 0:
+        # remove out of date metadata
+        for k in excess_metadata:
+            del data_metadata_dict[k]
+
+    uk_datasets = [k for k in selected_datasets if k not in dmd_set]
+    for k in uk_datasets:
+        blob = STORAGE_CLIENT.bucket(DATA_BUCKET).get_blob(f'datasets/{k}')
+        if blob == None:
+            print("dataset does not exist in cloud storage - list not refreshed. bug?")
+        elif blob.metadata != None:
+            data_metadata_dict.update({k:blob.metadata})
+        else:
+            data_bytes = blob.download_as_bytes()
+            valid, message, _, metadata = data_check_datasets((k,"data:text/csv;base64,"+base64.b64encode(data_bytes).decode('utf-8')),load_data = False)
+            if not valid:
+                metadata = {k:{'ineligible':f"ineligible:{message}"}}
+                #flash a warning, but store in the metadata an indicator that the ds is not eligible
+                print('uh oh!') #output to dash warning that there are non-compatible datasets in the bucket not being
+                #displayed. This will only flash the first time, after which the datasets will be viewable but will not
+                #do anything when selected (should make a place in data pane to display this notice).
+
+            #upload the flag to
+            data_metadata_dict.update(metadata)
+            attach_metadata_to_blob(metadata,blob)
+
+    print(len(data_metadata_dict))
+    print(data_metadata_dict)
+
+    return data_metadata_dict
+
+    #add feature: if a selected dataset is missing metadata, need to load in, submit, and register
+    #from within this function
+
+#@app.callback(
+#    Output('data-pane','options'),
+#    Input('dataset-select','value'),
+#    Input('model-select', 'value'),
+#    State('mode-select', 'value'),
+#)
+
+#def populate_data_pane(datasets):
+
+    out_dict = {}
+
+#    for i in datasets:
+#        blob = STORAGE_CLIENT.bucket(DATA_BUCKET).get_blob(f'datasets/{model}')
+
+#        metadata = blob.metadata
+
+
+
 @app.callback(
     Output('download-results', "data"),
     Input('btn-download-results', 'n_clicks'),
     State('run-name','value'),
-    State('mode-select', 'value')
+    State('mode-select', 'value'),
+    State('run_id', 'data'),
+    State('dataset_titles', 'data')
 )
-def download_results(n_clicks,run_name,mode):
+def download_results(n_clicks,run_name,mode,run_id,dataset_titles):
 
     if n_clicks is not None:
 
@@ -196,7 +279,7 @@ def download_results(n_clicks,run_name,mode):
 
         with tarfile.open(fileobj=tar_stream, mode="w:gz") as tar:
             #stats
-            blob = STORAGE_CLIENT.bucket(TMP_BUCKET).blob(f"stats_{RUN_ID}.csv")
+            blob = STORAGE_CLIENT.bucket(TMP_BUCKET).blob(f"stats_{run_id}.csv")
 
             obj = io.BytesIO(blob.download_as_bytes())
             obj.seek(0)
@@ -205,7 +288,7 @@ def download_results(n_clicks,run_name,mode):
             tar.addfile(tarinfo = info,fileobj=obj)
 
             #config
-            blob = STORAGE_CLIENT.bucket(TMP_BUCKET).blob(f"config_{RUN_ID}.yml")
+            blob = STORAGE_CLIENT.bucket(TMP_BUCKET).blob(f"config_{run_id}.yml")
 
             obj = io.BytesIO(blob.download_as_bytes())
             obj.seek(0)
@@ -215,18 +298,18 @@ def download_results(n_clicks,run_name,mode):
 
             #add model object
             if mode !="Inference":
-                blob = STORAGE_CLIENT.bucket(TMP_BUCKET).blob(f"trained_model_{RUN_ID}.hd5")
+                blob = STORAGE_CLIENT.bucket(TMP_BUCKET).blob(f"trained_model_{run_id}.hd5")
 
                 obj = io.BytesIO(blob.download_as_bytes())
                 obj.seek(0)
-                info = tarfile.TarInfo(name=f"{[run_name if run_name is not None else RUN_ID][0]}_trained_model.hd5")
+                info = tarfile.TarInfo(name=f"{[run_name if run_name is not None else run_id][0]}_trained_model.hd5")
                 info.size = len(obj.getvalue())
                 tar.addfile(tarinfo=info, fileobj=obj)
 
             #add data
 
-            for i in DATASET_TITLES:
-                blob = STORAGE_CLIENT.bucket(TMP_BUCKET).blob(f"{i}_{RUN_ID}.txt")
+            for i in dataset_titles:
+                blob = STORAGE_CLIENT.bucket(TMP_BUCKET).blob(f"{i}_{run_id}.txt")
 
                 obj = io.BytesIO(blob.download_as_bytes())
                 obj.seek(0)
@@ -236,7 +319,7 @@ def download_results(n_clicks,run_name,mode):
 
         tar_stream.seek(0)
 
-        return dcc.send_bytes(tar_stream.getvalue(),f"{RUN_ID}_data.tar.gz")
+        return dcc.send_bytes(tar_stream.getvalue(),f"{run_id}_data.tar.gz")
 
 @app.callback(
     Output('alert-model-run-processing-fail','is_open'),
@@ -247,19 +330,23 @@ def download_results(n_clicks,run_name,mode):
      Output('stats-out', 'children'),
      Output('artifacts-out', 'children'),
      Output('download-out', 'children'),
-     Output('upload-out', 'children'),
+     Output('upload-out', 'children', allow_duplicate=True),
+     Output("params_dicts","data"),
+     Output("dataset_titles", "data"),
+     Output("run_id", "data"),
      Input('run-button', 'n_clicks'),
      State('mode-select', 'value'),
      State('model-select', 'value'),
-     State('dataset-select', 'value')
+     State('dataset-select', 'value'),
+     State('params_dicts', 'data'),
+     State("dataset_titles", "data"),
+    prevent_initial_call=True
  )
-def model_run_event(n_clicks,mode,model,datasets):
+def model_run_event(n_clicks,mode,model,datasets,params_dicts,dataset_titles):
+
+    print('trying')
 
     if n_clicks is not None:
-
-        global PARAMS_DICT_RUN
-
-        global RUN_ID
 
         message = "Run Failed: "
 
@@ -294,12 +381,13 @@ def model_run_event(n_clicks,mode,model,datasets):
 
         if not any_error:
             try:
+                if params_dicts["params_dict_run"] == {}:
+                    params_dicts["params_dict_run"] = params_dicts["params_dict"]
 
-                RUN_ID = abs(hash("".join(["".join(PARAMS_DICT_RUN), str(mode), str(model), "".join(datasets)])+str(time.time()))) #time.time() makes it unique even when
-                #parameters are fixed, may want to change behavior later
+                # time.time() makes it unique even when parameters are fixed, may want to change behavior later
+                run_id = str(abs(hash("".join(["".join(params_dicts["params_dict_run"]), str(mode), str(model), "".join(datasets)])+str(time.time()))))
 
-                #
-                config_dict = PARAMS_DICT_RUN.copy()
+                config_dict = params_dicts["params_dict_run"].copy()
 
                 config_dict.update({"Datasets":",".join(datasets)})
                 config_dict.update({"Model":model})
@@ -307,36 +395,26 @@ def model_run_event(n_clicks,mode,model,datasets):
 
                 config_table = pd.DataFrame(config_dict,index=[0])
 
-                #config_table.to_csv(f"./tmp/config.yml")
-
-                blob = STORAGE_CLIENT.bucket(TMP_BUCKET).blob(f'config_{RUN_ID}.yml')
+                blob = STORAGE_CLIENT.bucket(TMP_BUCKET).blob(f'config_{run_id}.yml')
                 blob.upload_from_string(config_table.to_csv(), 'text/csv')
 
-                PARAMS_DICT_RUN = PARAMS_DICT
-
-                #config_out = "Run Configuration:\n +\"Mode:"+ ("Inference" if mode else "Training")
-                #                                            "\nModel: "+model+\
-                #                                            "\nDatasets: " + "".join(["\n\t-" + str(i) for i in datasets])+\
-                #                                            "\nParameters selected: "+ "".join(["\n\t-"+a+":"+str(b) for (a,b) in PARAMS_DICT.items()])
+                params_dicts["params_dict_run"] = params_dicts["params_dict"]
 
                 config_out_children = [html.Div(id='run-name-block',children =[html.Div(id='run-name-prompt',children = "Run name:"),
-                                            dcc.Input(id='run-name', type="text", placeholder="my_unique_run_name",style={'textAlign': 'left', 'vertical-align': 'top', 'width': 400})
-                                                                                ],style={"display": "inline-block"}) if mode!="Inference" else html.Div(id='run-name')] +\
+                                        dcc.Input(id='run-name', type="text", placeholder="my_unique_pretrained_model_name",style={'textAlign': 'left', 'vertical-align': 'top', 'width': 400}),
+                                                                               html.Div(id='description-prompt', children="Description:"),
+                                        dcc.Textarea(id='description',style={'textAlign': 'left','vertical-align': 'top','width': 400,'height':100})
+                                                                                ],style={"display": "inline-block"}) if mode!="Inference" else html.Div(id='run-name-block',children=[html.Div(id='run-name'),html.Div(id='description')]),] +\
                                        [html.Div(id='config-report-rc',children = "Run Configuration:"),
                                        html.Div(id='config-report-mode', children="Mode: "+ mode),
                                        html.Div(id='config-report-model',children="Model: " + model),
                                        html.Div(id='config-report-datasets',children ='Datasets: ')] +\
                                        [html.Div(id='config-report-datasets-' + i,children="- "+str(i),style={'marginLeft': 15}) for i in datasets] +\
                                        [html.Div(id='config-report-parameters',children ='Parameters: ')] + \
-                                       [html.Div(id='config-report-parameters-' + a,children="- "+a+": "+str(b),style={'marginLeft': 15}) for (a,b) in PARAMS_DICT.items()]
+                                       [html.Div(id='config-report-parameters-' + a,children="- "+a+": "+str(b),style={'marginLeft': 15}) for (a,b) in params_dicts["params_dict"].items()]
 
                 #this is where model will actually run
-                data,artifacts,stats = run_model(mode,model,datasets)
-
-                #html.Div(id='config-report-mode'),
-                #html.Div(id='config-report-model'),
-                #html.Div(id='config-report-datasets'),
-                #html.Div(id='config-report-parameters')]
+                data,artifacts,stats,dataset_titles = run_model(mode,model,datasets,run_id)
 
                 message = "Run Succeeded!"
 
@@ -346,12 +424,10 @@ def model_run_event(n_clicks,mode,model,datasets):
                 message = "Run Failed: error while processing algorithm"
                 config_out_payload = [html.Div(id='error-title',children="ERROR:"),html.Div(id='error message',children =[str(e)])]
                 processing_fail = True
-        print(processing_fail)
-        print(any_error)
 
         download_out = [html.Div([html.Button("Download Results", id="btn-download-results"),
                     dcc.Download(id="download-results")]) if not (processing_fail or any_error) else ""]
-        print(artifacts)
+
         artifacts_out = html.Div(artifacts,style={'textAlign': 'left', 'vertical-align': 'top','width': 400})
 
         stats_out = html.Div([
@@ -361,26 +437,28 @@ def model_run_event(n_clicks,mode,model,datasets):
                             dash_table.DataTable(stats.to_dict('records')),
                         ],style={'textAlign': 'left', 'vertical-align': 'top','width': 400}) if not (processing_fail or any_error) else ""])
 
-        return [processing_fail,ds_fail,model_fail,message,config_out_payload,stats_out,artifacts_out,download_out,html.Button("Upload Trained model", id="btn-upload-model") if mode != "Inference" and not (processing_fail or any_error) else ""]
+        return [processing_fail,ds_fail,model_fail,message,config_out_payload,stats_out,artifacts_out,download_out,html.Button("Upload Trained model", id="btn-upload-model") if mode != "Inference" and not (processing_fail or any_error) else "",params_dicts,dataset_titles,run_id]
 
 @app.callback(#Output('params-select', 'options'),
                     #Output('params-select', 'value'),
+                    Output('params_dicts',"data", allow_duplicate=True),
                     Output('params-holder', 'children'),
                     Input('mode-select', 'value'),
-                    Input('model-select', 'value')
+                    Input('model-select', 'value'),
+                    State("params_dicts","data"),
+    prevent_initial_call=True
 )
-def get_parameters(mode,model):
+def get_parameters(mode,model,params_dicts):
 
-    global PARAMS_DICT
-
-    PARAMS_DICT = {}
+    #if this is present, wipe it out
+    params_dicts['params_dict'] = {}
 
     if model is not None:
         if mode == 'Inference':
             #we will ideally want this to read properties of the model object itself to run this.
             #hopefully will not be particular to a certain model.
 
-            return dcc.Checklist(id='checklist-params', options=["on_GPU"], value=[False])
+            return params_dicts,dcc.Checklist(id='checklist-params', options=["on_GPU"], value=[False])
 
             #if model == "hello4.hd5":
             #    return [dcc.Checklist(id='checklist-params', options=["on_GPU","specific other thing","secret third thing"], value=[False,False,False])]
@@ -392,17 +470,17 @@ def get_parameters(mode,model):
             #the relevant training hyperparameters to expose per modeling approach ("archetecture").
             if model == "michael_deeper_arch":
                 #return ["test"],[],dcc.Slider(0, 20, 5,value=10,id='test-conditional-component')
-                return [dcc.Checklist(id='checklist-params', options=["test"], value=[]),
+                return params_dicts,[dcc.Checklist(id='checklist-params', options=["test"], value=[]),
                         html.Div(id='var1-param-name',style={'textAlign': 'left'},children="a_specific_param"),
                         dcc.Slider(0, 20, 5,value=10,id='var1-param')]
             elif model == "irina_og_arch":
                 #return ["on_GPU","other thing"],[],[]
-                return [dcc.Checklist(id='checklist-params', options=["on_GPU","other thing"], value=[])]
+                return params_dicts,[dcc.Checklist(id='checklist-params', options=["on_GPU","other thing"], value=[])]
             elif model == "new_exp_arch":
                 #return ["on_GPU","other thing","secret third thing"],[],[]
-                return [dcc.Checklist(id='checklist-params', options=["on_GPU","other thing","secret third thing"], value=[])]
+                return params_dicts,[dcc.Checklist(id='checklist-params', options=["on_GPU","other thing","secret third thing"], value=[])]
     else:
-        return []
+        return params_dicts,[]
 
 
 @app.callback(
@@ -417,13 +495,6 @@ def update_model_checklist(mode,is_open):
         return get_models(),html.Button('Upload Trained Model(s)')
     else:
         return get_archetectures(),None
-
-@app.callback(
-    Output('dataset-select', 'options'),
-    Input('alert-dataset-success', 'is_open')
-)
-def update_data_checklist(is_open):
-    return get_datasets()
 
 @app.callback(
     Output('mode-select-output', 'children'),
@@ -473,175 +544,85 @@ def attach_null_metadata(blob):
 )
 def present_metadata(model,mode):
 
-    if mode == 'Training' or model == None:
+    if model == None:
         return None
 
-    #extract metadata from GCP object, if available (lightest option)
+    if mode == 'Training':
 
-    blob = STORAGE_CLIENT.bucket(DATA_BUCKET).get_blob(f'models/{model}')
+        metadata = app_data.TRAINING_APPROACHES[model]
 
-    metadata = blob.metadata
+    else:
+        #extract metadata from GCP object, if available (lightest option)
 
-    if metadata == None:
+        blob = STORAGE_CLIENT.bucket(DATA_BUCKET).get_blob(f'models/{model}')
 
-        #download object,
-        #look for metadata on object, register metadata on object in GCP for faster lookup next time
+        metadata = blob.metadata
 
-        #and actually, will want to enforce the blob metadata at upload time
-        model_bytes = io.BytesIO(blob.download_as_bytes())
-        with h5py.File(model_bytes, 'r') as f:
-            metadata = extract_metadata(f)
-            if metadata is None:
-                attach_null_metadata(blob) #save the DL next time
-                return html.Div("File object missing metadata")
-            else:
-                attach_metadata_to_blob(metadata, blob)
-    elif 'no_metadata' in metadata and len(metadata)==1:
-        return html.Div("File object missing metadata")
+        if metadata == None:
+
+            #download object,
+            #look for metadata on object, register metadata on object in GCP for faster lookup next time
+
+            #and actually, will want to enforce the blob metadata at upload time
+            model_bytes = io.BytesIO(blob.download_as_bytes())
+            with h5py.File(model_bytes, 'r') as f:
+                metadata = extract_metadata(f)
+                if metadata is None:
+                    attach_null_metadata(blob) #save the DL next time
+                    return html.Div("File object missing metadata")
+                else:
+                    attach_metadata_to_blob(metadata, blob)
+        elif 'no_metadata' in metadata and len(metadata)==1:
+            return html.Div("File object missing metadata")
 
     return [html.Div(children=[html.Strong(str(key)),html.Span(f": {metadata[key]}")],style={'marginBottom': 10}) for key in metadata]
 
 @app.callback(
+    Output("data_metadata_dict", "data", allow_duplicate=True),
     Output("alert-dataset-success", "is_open"),
     Output("alert-dataset-fail", "is_open"),
     Output("alert-dataset-fail", "children"),
     Output("upload-ds", "contents"), #this output is workaround for known dcc.Upload bug where duplicate uploads don't trigger change.
-    Input('upload-ds', 'filename'),Input('upload-ds', 'contents')
+    Output("dataset-select","options"),
+    Input('upload-ds', 'filename'),Input('upload-ds', 'contents'),
+    Input('data_metadata_dict','data'),
+    prevent_initial_call=True
 )
-def datasets_to_gcp(filename,contents):
-    success = True
-    message = "Dataset upload unsuccessful: did not pass standards checking"
+def datasets_to_gcp(filename,contents,data_metadata_dict):
+
     #this gets called by alert on startup as this is an output, make sure to not trigger alert in this case
     if not filename == None and not contents == None:
         for i in zip(filename,contents):
-            valid, message_out = data_check_datasets(i)
-            if message_out !="":
-                message = message + "; - " + message_out
+            valid, message,data,metadata = data_check_datasets(i,load_data=True)
+
             if valid:
+                print('uploading')
 
-                content_type, content_string = i[1].split(',')
-                decoded = base64.b64decode(content_string)
+                blob = STORAGE_CLIENT.bucket(DATA_BUCKET).blob(f'datasets/{i[0]}')
 
-                #assemble dataset metadata object.
-                #extract column names- interpret wav #s from other columns based on known rules.
+                blob.upload_from_string(data, 'text/csv')
 
-                #check that the dataset does not contain duplicated columns:
+                attach_metadata_to_blob(metadata,blob)
 
-                print('checking duplicate column names')
+                #if filename is already in data_metadata_dict, clear it so that the contents will be properly
+                #pulled
 
-                #avoid behavior of pandas to rename duplicate names
-                reader = csv.reader(io.StringIO(decoded.decode('utf-8')))
-                columns = next(reader)
+                print(i[0])
 
-                print(columns)
+                if i[0] in data_metadata_dict:
+                    print('clearing data_metadata_dict on reupload')
+                    del data_metadata_dict[i[0]]
 
-                #check that column names are unique
-                if len(columns) != len(set(columns)):
-                    success = False
-                    message = message + "; - " + f"columns must be uniquely named"
-
-                data = pd.read_csv(io.StringIO(decoded.decode('utf-8')))
-                print("loaded")
-
-                #along with parsing columns, rename the column metadata to 'standard' names. For example,
-                #the identifer field, no matter what it is called, will be replaced by id. Have an visual indicator
-                #for columns that cannot be matched to global naming.
-
-                #what I could do here- have a google sheet that matches global names to variable type, as well
-                #as known aliases. This can be referenced here, as well as for model behaviors like one-hot expansion
-                #of categorical variables.
-
-                #for now, let's just hardcode a dict. have it as a seperate file, 'standard_variables.py'
-
-                if 'metadata' in columns:
-                    pass
-                    #in this case, use provided info to extract the wave numbers by position. assume the wav numbers
-                    #to be the rightmost columns in consecutive order according to the metadata information.
-                elif any('wn' in c for c in columns):
-                    #in this case, use string matching to determine the wave numbers
-                    #use the values from the matched strings to arrive at the relevant variable values.
-                    matches = ['wn' in c for c in columns]
-
-                    wave_number_start_index = matches.index(True)
-                    wave_number_end_index = len(matches) - 1 - matches[::-1].index(True)
-
-                    a,b = columns[wave_number_start_index][2:],columns[wave_number_end_index][2:]
-                    #make the metadata terms for 'max' and 'min' come from # values instead of assuming low/high high/low ordering
-                    if float(a) > float(b):
-                        wave_number_max = a
-                        wave_number_min = b
-                    else:
-                        wave_number_max = b
-                        wave_number_min = a
-
-                    wave_number_step = (float(wave_number_max)-float(wave_number_min)) / (wave_number_end_index - wave_number_start_index)
-
-                    other_cols_start = 0 #assume this for now, but see if there are exeptions
-                    other_cols_end = wave_number_start_index - 1
-
-                    non_wave_columns = columns[other_cols_start:other_cols_end]
-                else:
-                    non_wave_columns = columns
-                    standard_cols = ["-1"]
-                    standard_cols_aliases = ["-1"]
-                    wave_number_start_index = ["-1"]
-                    wave_number_end_index = ["-1"]
-                    wave_number_min = ["-1"]
-                    wave_number_max =  ["-1"]
-                    wave_number_step = ["-1"]
-
-                #classify provided columns into standard and other columns:
-
-                standard_variable_names.DICT
-                standard_cols = []
-                standard_cols_aliases = []
-                other_cols = []
-
-                for f in non_wave_columns:
-                    if f in standard_variable_names.DICT:
-                        if f not in standard_cols:
-                            standard_cols.append(f)
-                            standard_cols_aliases.append(f)
-                        else:
-                            success = False
-                            message = message + "; - " + f"multiple columns refer to the same internal id: {f}"
-                    else:
-                        #match = [f in x[0] for x in [(standard_variable_names.DICT[p]['aliases'],p) for p in standard_variable_names.DICT]]
-                        match = [p for p in standard_variable_names.DICT if f in standard_variable_names.DICT[p]['aliases']]
-                        if len(match) > 1:
-                            success = False
-                            message = message + "; - " + f"column name {f} matched aliases for multiple standard names: issues is a duplicate alias in standard names dictionary, remedy there."
-                        elif len(match) > 0:
-                            if match[0] not in standard_cols:
-                                standard_cols.append(match[0])
-                                standard_cols_aliases.append(f)
-                            else:
-                                success = False
-                                message = message + "; - " + f"multiple columns refer to the same internal id: {match[0]}"
-                        else:
-                            other_cols.append(f)
-
-                #If wav numbers are absent in dataset, supply relevant metadata fields with -1
-                metadata = {"standard_columns":standard_cols,"standard_column_aliases":standard_cols_aliases,"other_columns":other_cols,"wave_number_start_index":wave_number_start_index,
-                            "wave_number_end_index":wave_number_end_index,"wave_number_min":wave_number_min,"wave_number_max":wave_number_max,"wave_number_step":wave_number_step}
-
-                if success:
-                    print('uploading')
-                    blob = STORAGE_CLIENT.bucket(DATA_BUCKET).blob(f'datasets/{i[0]}')
-
-                    blob.upload_from_string(decoded, 'text/csv')
-
-                    attach_metadata_to_blob(metadata,blob)
-
+                message = ""
                 #import code
                 #code.interact(local=dict(globals(), **locals()))
 
             else:
-                success = False
-
-        return success,not success,message,None
+                valid = False
     else:
-        return False,False,"",None
+        return data_metadata_dict,None,None,None,None,get_datasets()
+
+    return data_metadata_dict,valid,not valid,message,None,get_datasets()
 
 #similar to the one below,
 
@@ -649,9 +630,11 @@ def datasets_to_gcp(filename,contents):
     Output("model-upload-from-session-success", "is_open"),
     Output("model-upload-from-session-failure", "is_open"),
     Input('btn-upload-model', 'n_clicks'),
-    State('run-name',"value")
+    State('run-name',"value"),
+    State('description', "value"),
+    State("run_id","data")
 )
-def trained_model_publish(n_clicks,run_name):
+def trained_model_publish(n_clicks,run_name,description,run_id):
 
     #later may want to define try / or failure condition
 
@@ -663,9 +646,11 @@ def trained_model_publish(n_clicks,run_name):
         elif False:
             pass
 
-        blob = STORAGE_CLIENT.bucket(TMP_BUCKET).blob(f"trained_model_{RUN_ID}.hd5")
+        blob = STORAGE_CLIENT.bucket(TMP_BUCKET).blob(f"trained_model_{run_id}.hd5")
 
         STORAGE_CLIENT.bucket(TMP_BUCKET).copy_blob(blob,STORAGE_CLIENT.bucket(DATA_BUCKET) , f'models/{run_name}.hd5')
+
+        #TODO: attach description and other metadata to published model object.
 
         return True,False
 
@@ -703,14 +688,128 @@ def models_to_gcp(filename, contents):
         return success, not success
     else:
         return False, False
-def data_check_datasets(data):
+def data_check_datasets(file,load_data = True):
+    message = "Dataset upload unsuccessful: did not pass standards checking"
+
+    print(file[1][0:500])
+
+    valid = True
 
     #to check - presence of duplicated rows (reject).
 
-    if not ".csv" == data[0][-4:]:
-        return False,"data not named a csv"
+    if not ".csv" == file[0][-4:]:
+        return False,message + "; - file not named as a csv",None,None
+    else:
+        content_type, content_string = file[1].split(',')
+        decoded = base64.b64decode(content_string)
 
-    return True,""
+        # assemble dataset metadata object.
+        # extract column names- interpret wav #s from other columns based on known rules.
+
+        # check that the dataset does not contain duplicated columns:
+
+        print('checking duplicate column names')
+
+        # avoid behavior of pandas to rename duplicate names
+        reader = csv.reader(io.StringIO(decoded.decode('utf-8')))
+        columns = next(reader)
+
+        print(columns)
+
+        # check that column names are unique
+        if len(columns) != len(set(columns)):
+            valid = False
+            message = message + "; - " + f"columns must be uniquely named"
+
+        print("loaded")
+
+        # along with parsing columns, rename the column metadata to 'standard' names. For example,
+        # the identifer field, no matter what it is called, will be replaced by id. Have an visual indicator
+        # for columns that cannot be matched to global naming.
+
+        # what I could do here- have a google sheet that matches global names to variable type, as well
+        # as known aliases. This can be referenced here, as well as for model behaviors like one-hot expansion
+        # of categorical variables.
+
+        # for now, let's just hardcode a dict. have it as a seperate file, 'standard_variables.py'
+
+        if 'metadata' in columns:
+            pass
+            # in this case, use provided info to extract the wave numbers by position. assume the wav numbers
+            # to be the rightmost columns in consecutive order according to the metadata information.
+        elif any('wn' in c for c in columns):
+            # in this case, use string matching to determine the wave numbers
+            # use the values from the matched strings to arrive at the relevant variable values.
+            matches = ['wn' in c for c in columns]
+
+            wave_number_start_index = matches.index(True)
+            wave_number_end_index = len(matches) - 1 - matches[::-1].index(True)
+
+            a, b = columns[wave_number_start_index][2:], columns[wave_number_end_index][2:]
+            # make the metadata terms for 'max' and 'min' come from # values instead of assuming low/high high/low ordering
+            if float(a) > float(b):
+                wave_number_max = a
+                wave_number_min = b
+            else:
+                wave_number_max = b
+                wave_number_min = a
+
+            wave_number_step = (float(wave_number_max) - float(wave_number_min)) / (
+                        wave_number_end_index - wave_number_start_index)
+
+            other_cols_start = 0  # assume this for now, but see if there are exeptions
+            other_cols_end = wave_number_start_index - 1
+
+            non_wave_columns = columns[other_cols_start:other_cols_end]
+        else:
+            non_wave_columns = columns
+            standard_cols = ["-1"]
+            standard_cols_aliases = ["-1"]
+            wave_number_start_index = ["-1"]
+            wave_number_end_index = ["-1"]
+            wave_number_min = ["-1"]
+            wave_number_max = ["-1"]
+            wave_number_step = ["-1"]
+
+        # classify provided columns into standard and other columns:
+
+        standard_cols = []
+        standard_cols_aliases = []
+        other_cols = []
+
+        for f in non_wave_columns:
+            if f in app_data.STANDARD_COLUMN_NAMES:
+                if f not in standard_cols:
+                    standard_cols.append(f)
+                    standard_cols_aliases.append(f)
+                else:
+                    valid = False
+                    message = message + "; - " + f"multiple columns refer to the same internal id: {f}"
+            else:
+                # match = [f in x[0] for x in [(standard_variable_names.DICT[p]['aliases'],p) for p in standard_variable_names.DICT]]
+                match = [p for p in app_data.STANDARD_COLUMN_NAMES if f in app_data.STANDARD_COLUMN_NAMES[p]['aliases']]
+                if len(match) > 1:
+                    valid = False
+                    message = message + "; - " + f"column name {f} matched aliases for multiple standard names: issues is a duplicate alias in standard names dictionary, remedy there."
+                elif len(match) > 0:
+                    if match[0] not in standard_cols:
+                        standard_cols.append(match[0])
+                        standard_cols_aliases.append(f)
+                    else:
+                        valid = False
+                        message = message + "; - " + f"multiple columns refer to the same internal id: {match[0]}"
+                else:
+                    other_cols.append(f)
+
+        # If wav numbers are absent in dataset, supply relevant metadata fields with -1
+        metadata = {"standard_columns": standard_cols, "standard_column_aliases": standard_cols_aliases,
+                    "other_columns": other_cols, "wave_number_start_index": wave_number_start_index,
+                    "wave_number_end_index": wave_number_end_index, "wave_number_min": wave_number_min,
+                    "wave_number_max": wave_number_max, "wave_number_step": wave_number_step}
+        if valid:
+            return True,"",decoded if load_data else None,metadata #
+        else:
+            return False,message,None,None
 
 def data_check_models(data):
 
@@ -728,44 +827,46 @@ def data_check_models(data):
 
 ################################as add parameters, give it this boilerplate:
 
-@app.callback(Input('checklist-params', 'value'),
+@app.callback(Output("params_dicts","data", allow_duplicate=True),
+              Input('checklist-params', 'value'),
               Input('checklist-params', 'options'),
               #Input('run-button', 'n_clicks'),
-              Input('params-holder', 'children')
+              Input('params-holder', 'children'),
+              State('params_dicts',"data"),
+    prevent_initial_call=True
 )
-def checklist_params_dict_pop(value,options,_):
-
-    global PARAMS_DICT
+def checklist_params_dict_pop(value,options,_,params_dicts):
 
     print('in 2')
 
     out_dict = {i: (True if i in value else False) for i in options}
     for i in out_dict:
-        PARAMS_DICT[i]= out_dict[i]
+        params_dicts["params_dict"][i]= out_dict[i]
 
-    print(PARAMS_DICT)
-@app.callback(Input('var1-param', 'value'),
-                    Input('var1-param-name', 'children'),
-              Input('params-holder', 'children')
+    return params_dicts
+
+@app.callback(Output("params_dicts","data", allow_duplicate=True),
+                Input('var1-param', 'value'),
+                Input('var1-param-name', 'children'),
+                Input('params-holder', 'children'),
+                State('params_dicts', "data"),
+    prevent_initial_call=True
 )
-def checklist_params_dict_pop(value,name,_):
-    global PARAMS_DICT
+def checklist_params_dict_pop_var1_param(value,name,_,params_dicts):
 
     print('in 1')
 
-    PARAMS_DICT[name] = value
+    params_dicts["params_dict"][name] = value
 
-    print(PARAMS_DICT)
+    return params_dicts
 
 #this is the  actual ML integration etc. placeholder
 
-def run_model(mode,model,datasets):
-
-    global DATASET_TITLES
+def run_model(mode,model,datasets,run_id):
 
     start = time.time()
 
-    if mode=='Inference':
+    if mode == 'Inference':
 
         data = [[rand.randint(1,15) for i in range(100)]]
         titles = ['Data: Ages'] #go.Scatter(x=list(range(len(data))), y=data)
@@ -784,25 +885,23 @@ def run_model(mode,model,datasets):
         #write out model object
         #observation- be careful with lifecycle. Object is written to temp data, but for longer running jobs need to make sure the object
         #will not be cycled from temp data prior to publication.
-        blob = STORAGE_CLIENT.bucket(TMP_BUCKET).blob(f"trained_model_{RUN_ID}.hd5")
+        blob = STORAGE_CLIENT.bucket(TMP_BUCKET).blob(f"trained_model_{run_id}.hd5")
         blob.upload_from_string(pd.DataFrame([1,2,3]).to_csv(), 'text/csv')
 
     stats_table = pd.DataFrame.from_dict(stats)
 
     # write out data, artifacts, stats_table to tmp files
-    blob = STORAGE_CLIENT.bucket(TMP_BUCKET).blob(f'stats_{RUN_ID}.csv')
+    blob = STORAGE_CLIENT.bucket(TMP_BUCKET).blob(f'stats_{run_id}.csv')
     blob.upload_from_string(stats_table.to_csv(), 'text/csv')
 
     artifacts = [html.Div(id='figure-area', children=graphs)]
 
-    DATASET_TITLES = titles
-
     #save plot data to tmp files
-    for i in range(len(DATASET_TITLES)):
-        blob = STORAGE_CLIENT.bucket(TMP_BUCKET).blob(f"{titles[i]}_{RUN_ID}.txt")
+    for i in range(len(titles)):
+        blob = STORAGE_CLIENT.bucket(TMP_BUCKET).blob(f"{titles[i]}_{run_id}.txt")
         blob.upload_from_string(pd.DataFrame(data[i]).to_csv(), 'text/csv')
 
-    return data, artifacts, stats_table
+    return data, artifacts, stats_table, titles
 
 if __name__ == '__main__':
 
