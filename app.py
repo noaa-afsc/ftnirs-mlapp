@@ -121,6 +121,7 @@ app.layout = html.Div(id='parent', children=[
         [dcc.Store(id='params_dicts', storage_type='memory',data = {"params_dict":{},"params_dict_run":{}}),
         dcc.Store(id='dataset_titles', storage_type='memory',data = {}),
         dcc.Store(id='data_metadata_dict', storage_type='memory',data = {}),
+        dcc.Store(id='model_metadata_dict', storage_type='memory', data={}),
         dcc.Store(id='run_id', storage_type='memory'),
         html.Div(
     [
@@ -188,6 +189,64 @@ html.Div(
         ],style={"display": "inline-block",'vertical-align': 'top'})
 
 ])
+
+@app.callback(
+    Output('model_metadata_dict',"data", allow_duplicate=True),
+    Input('mode-select', 'value'),
+    Input('model-select','options'),
+    Input('model-select','value'),
+    State('model_metadata_dict',"data"),
+    prevent_initial_call=True
+)
+def update_model_metadata_dict(mode,known_models,selected_models,model_metadata_dict):
+
+    if mode == "Training" or selected_models == None:
+        return model_metadata_dict
+    else:
+
+        selected_models = [selected_models]
+
+        km_set = set(known_models)
+        mmd_set = set(model_metadata_dict)
+
+        excess_metadata = mmd_set.difference(km_set)
+
+        if len(excess_metadata) > 0:
+            # remove out of date metadata
+            for k in excess_metadata:
+                print("deleting "+k)
+                del model_metadata_dict[k]
+
+        uk_models = [k for k in selected_models if k not in mmd_set]
+        for k in uk_models:
+            print(k)
+            blob = STORAGE_CLIENT.bucket(DATA_BUCKET).get_blob(f'models/{k}')
+            if blob == None:
+                print("model does not exist in cloud storage - list not refreshed. bug?")
+            elif blob.metadata != None:
+                model_metadata_dict.update({k: blob.metadata})
+            else:
+                data_bytes = blob.download_as_bytes()
+                iobytes = io.BytesIO(data_bytes)
+
+                valid,_,data,metadata = data_check_models((k, "data:application/octet-stream;base64," + base64.b64encode(data_bytes).decode('utf-8')),load_model=True)
+
+                if not valid:
+                    metadata = {"no_metadata":1}
+                    # flash a warning, but store in the metadata an indicator that the ds is not eligible
+
+                # upload the flag to
+                print(metadata)
+                model_metadata_dict.update({k:metadata})
+                attach_metadata_to_blob(metadata, blob)
+
+
+    print(len(model_metadata_dict))
+    print(model_metadata_dict)
+
+    return model_metadata_dict
+
+
 
 #possibly, could be issue with this where a dataset/model is reuploaded. To address this,
 #could make sure to clear the item during upload process, or, disallow overwritting.
@@ -344,7 +403,7 @@ def download_results(n_clicks,run_name,mode,run_id,dataset_titles):
  )
 def model_run_event(n_clicks,mode,model,datasets,params_dicts,dataset_titles):
 
-    print('trying')
+    run_id = "" #set default so if it errors out, still can return outputs
 
     if n_clicks is not None:
 
@@ -424,6 +483,7 @@ def model_run_event(n_clicks,mode,model,datasets,params_dicts,dataset_titles):
                 message = "Run Failed: error while processing algorithm"
                 config_out_payload = [html.Div(id='error-title',children="ERROR:"),html.Div(id='error message',children =[str(e)])]
                 processing_fail = True
+
 
         download_out = [html.Div([html.Button("Download Results", id="btn-download-results"),
                     dcc.Download(id="download-results")]) if not (processing_fail or any_error) else ""]
@@ -539,10 +599,13 @@ def attach_null_metadata(blob):
 
 @app.callback(
     Output('model-select-output', 'children'),
-    Input('model-select', 'value'),
-    Input('mode-select', 'value')
+    Input("model_metadata_dict","data"),
+    State('model-select', 'value'),
+    State('mode-select', 'value')
 )
-def present_metadata(model,mode):
+def present_metadata(model_metadata_dict,model,mode):
+
+    print(model_metadata_dict)
 
     if model == None:
         return None
@@ -554,27 +617,10 @@ def present_metadata(model,mode):
     else:
         #extract metadata from GCP object, if available (lightest option)
 
-        blob = STORAGE_CLIENT.bucket(DATA_BUCKET).get_blob(f'models/{model}')
+        metadata = model_metadata_dict[model]
 
-        metadata = blob.metadata
-
-        if metadata == None:
-
-            #download object,
-            #look for metadata on object, register metadata on object in GCP for faster lookup next time
-
-            #and actually, will want to enforce the blob metadata at upload time
-            model_bytes = io.BytesIO(blob.download_as_bytes())
-            with h5py.File(model_bytes, 'r') as f:
-                metadata = extract_metadata(f)
-                if metadata is None:
-                    attach_null_metadata(blob) #save the DL next time
-                    return html.Div("File object missing metadata")
-                else:
-                    attach_metadata_to_blob(metadata, blob)
-        elif 'no_metadata' in metadata and len(metadata)==1:
-            return html.Div("File object missing metadata")
-
+    # could interpret this a little more: translate to 'return html.Div("File object missing metadata")'
+    # Don't dump all the info, rather, weed out the metadata fields and present the info that is most valuable to the user
     return [html.Div(children=[html.Strong(str(key)),html.Span(f": {metadata[key]}")],style={'marginBottom': 10}) for key in metadata]
 
 @app.callback(
@@ -585,7 +631,7 @@ def present_metadata(model,mode):
     Output("upload-ds", "contents"), #this output is workaround for known dcc.Upload bug where duplicate uploads don't trigger change.
     Output("dataset-select","options"),
     Input('upload-ds', 'filename'),Input('upload-ds', 'contents'),
-    Input('data_metadata_dict','data'),
+    State('data_metadata_dict','data'),
     prevent_initial_call=True
 )
 def datasets_to_gcp(filename,contents,data_metadata_dict):
@@ -657,41 +703,40 @@ def trained_model_publish(n_clicks,run_name,description,run_id):
 @app.callback(
     Output("alert-model-success", "is_open"),
     Output("alert-model-fail", "is_open"),
+    Output("alert-model-fail", "children"),
     Input('upload-model', 'filename'),Input('upload-model', 'contents')
 )
 def models_to_gcp(filename, contents):
+
     success = True
     # this gets called by alert on startup as this is an output, make sure to not trigger alert in this case
     if not filename == None and not contents == None:
         for i in zip(filename, contents):
-            if data_check_models(i):
+            print(i[1][0:200])
 
-                content_type, content_string = i[1].split(',')
-                decoded = base64.b64decode(content_string)
+            valid,message,data,metadata = data_check_models(i,load_model = True)
+
+            if valid:
 
                 blob = STORAGE_CLIENT.bucket(DATA_BUCKET).blob(f'models/{i[0]}')
 
-                blob.upload_from_string(decoded, 'text/csv')
+                blob.upload_from_string(data, 'text/csv')
 
                 #for every piece of metadata, attach it to the cloud object as well for easy retrieval
-                with h5py.File(io.BytesIO(decoded), 'r') as f:
-                    metadata = extract_metadata(f)
-                    if metadata is not None:
-                        print('attaching metadata')
-                        attach_metadata_to_blob(metadata, blob)
-                    else:
-                        attach_null_metadata(blob)
+                if metadata is not None:
+                    print('attaching metadata')
+                    attach_metadata_to_blob(metadata, blob)
+                else:
+                    attach_null_metadata(blob)
 
             else:
                 success = False
 
-        return success, not success
+        return success, not success, message
     else:
-        return False, False
+        return False, False, None
 def data_check_datasets(file,load_data = True):
     message = "Dataset upload unsuccessful: did not pass standards checking"
-
-    print(file[1][0:500])
 
     valid = True
 
@@ -811,19 +856,35 @@ def data_check_datasets(file,load_data = True):
         else:
             return False,message,None,None
 
-def data_check_models(data):
+def data_check_models(file,load_model):
+
+    valid = True
+    message = None
 
     #check that it's named correctly (very casually)
-    if not ".hd5" == data[0][-4:] and not ".h5" == data[0][-3:] and not ".hdf5" == data[0][-5:]:
-        return False
+    if not ".hd5" == file[0][-4:] and not ".h5" == file[0][-3:] and not ".hdf5" == file[0][-5:]:
+        valid = False
+        message = "not a correctly named file"
+        decoded = None
+        metadata = None
+    else:
+        content_type, content_string = file[1].split(',')
+        decoded = base64.b64decode(content_string)
+        # check its the correct type of file
 
-    #check its the correct type of file
-    if not h5py.is_hdf5(data[1]):
-        return False
+        try:
+            with h5py.File(io.BytesIO(decoded), 'r') as f:
+                metadata = extract_metadata(f)
+        except Exception as e:
+            valid = False
+            message = f"could not read file; {e}"
+            decoded = None
+            metadata = None
+
+    return valid,message,decoded if load_model else None,metadata
 
     #check that it has the essential metadata fields
 
-    return True
 
 ################################as add parameters, give it this boilerplate:
 
