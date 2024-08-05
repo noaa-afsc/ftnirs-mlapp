@@ -17,8 +17,11 @@ import time
 import base64
 import h5py
 import app_data
+from dotenv import load_dotenv
 
-dash.register_page(__name__, path='/')
+load_dotenv('./tmp/.env')
+
+dash.register_page(__name__, path='/',name = os.getenv("APPNAME")) #
 
 #this should be an .env variable
 GCP_PROJ="ggn-nmfs-afscftnirs-dev-97fc"
