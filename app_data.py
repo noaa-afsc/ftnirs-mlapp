@@ -8,7 +8,7 @@
 
 #can not have alias duplicated between standard names. In this case, make one scientist change their naming.
 
-wn_string_name = 'wave_number**'
+wn_string_name = 'wn**'
 
 STANDARD_COLUMN_NAMES = {'id':{'data_type':'unq_text','aliases':['File_name','file_name']},
         'split':{'data_type':'int','aliases':['Sample','sample']},
