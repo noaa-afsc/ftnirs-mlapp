@@ -48,6 +48,14 @@ def get_models():
 def get_archetectures():
     return [i for i in app_data.TRAINING_APPROACHES]
 
+#some graphical variables:
+top_row_max_height = 600
+horizontal_pane_margin = 50
+left_col_width = 500
+middle_col_width = 400
+H2_height = 30
+BUTTON_DEFAULT_STYLE = {"font-weight": 900,"width":100,"height":100}
+
 layout = html.Div(id='parent', children=[
 
     html.Div(
@@ -107,70 +115,71 @@ layout = html.Div(id='parent', children=[
                 color="danger",
                 duration=4000)
         ]),
-    html.Div(
-        [dcc.Store(id='params_dicts', storage_type='memory',data = {"params_dict":{},"params_dict_run":{}}),
+    html.Div(id = 'toprow',children=[
+        dcc.Store(id='params_dicts', storage_type='memory',data = {"params_dict":{},"params_dict_run":{}}),
         dcc.Store(id='dataset_titles', storage_type='memory',data = {}),
         dcc.Store(id='data_metadata_dict', storage_type='memory',data = {}),
         dcc.Store(id='columns_dict', storage_type='memory', data={}),
         dcc.Store(id='model_metadata_dict', storage_type='memory', data={}),
         dcc.Store(id='run_id', storage_type='memory'),
-        html.Div(
-    [
+            html.Div(children=[
+            html.Div(children=[
                 html.H2(id='H2_1', children='Select Datasets',
-                    style={'textAlign': 'left', 'marginTop': 20}),
+                    style={'textAlign': 'left'}),  #'marginTop': 20}
                 dcc.Checklist(id='dataset-select',
                     options=get_datasets(), # [9:]if f"datasets/" == i[:8]
-                    value=[],style={'width':800}),
+                    value=[], style={'maxHeight':200,'overflowY':'auto'}),
                 dcc.Upload(
                     id='upload-ds',
-                    children=html.Button('Upload File(s)'),
+                    children=html.Button('Upload Dataset(s)'),
                     multiple=True)
-            ],style={"display": "inline-block",'vertical-align': 'top','textAlign': 'left','marginRight': 20}),
+            ],style={"display": "inline-block",'vertical-align': 'top','textAlign': 'left'}), #'marginRight': 20
 
-        html.Div(
-    [
-                html.H2(id='H2_2', children='Select Mode',
-                    style={'textAlign': 'center','marginTop': 20,'textAlign': 'left'}),
-                dcc.Dropdown(id='mode-select', value="Training",clearable=False,
-                     options=["Training", "Inference", "Fine-tuning"],style={'width':200}),
-                html.Div(id='mode-select-output',style = {'textAlign': 'left'}),
-                dcc.Dropdown(id='model-select',style={'width':200}),
-                html.Div(id='model-select-output',style={'textAlign': 'left'}),
-                dcc.Upload(id='upload-model',children=None,multiple=True,style={'textAlign': 'left'})
-            ],style ={"display": "inline-block",'vertical-align': 'top','textAlign': 'center','width': 300,'marginRight':100,'height':450}),
-
-        html.Div(
-            [
-                html.H2(id='H2_3', children='Select Parameters',
-                    style={'textAlign': 'center','marginTop': 20}),
-                html.Div(id = "params-holder"),
-            ],style ={"display": "inline-block",'vertical-align': 'top','textAlign': 'right'}),
-        ]),html.Hr(style={'marginBottom': 40}),
-    html.Div(id='middle_row',children=[
+            html.Div(
+                [
+                    html.H2(id='H2_2', children='Select Mode',
+                            style={'textAlign': 'center', 'marginTop': 20, 'textAlign': 'left','height':H2_height}),
+                    dcc.Dropdown(id='mode-select', value="Training", clearable=False,
+                                 options=["Training", "Inference", "Fine-tuning"],style={'width': 200}), #
+                    html.Div(id='mode-select-output', style={'textAlign': 'left'}),
+                    dcc.Dropdown(id='model-select',style={'width': 200}), #
+                    html.Div(id='model-select-output', style={'textAlign': 'left'}),
+                    dcc.Upload(id='upload-model', children=None, multiple=True, style={'textAlign': 'left'})
+                ], style={'vertical-align': 'top', 'textAlign': 'center'}
+            )],style={"display": "inline-block",'marginRight': horizontal_pane_margin,'height': top_row_max_height, 'width': left_col_width}),
 
         html.Div(
             [
                 html.H2(children='Data Columns',
-                        style={'textAlign': 'left'}),
-                html.Div(id="data-pane"),
-            ], style={"display": "inline-block", 'vertical-align': 'top', 'textAlign': 'left','width': 800,'marginRight': 200}),
+                        style={'textAlign': 'left','height':H2_height}),
+                html.Div(id="data-pane",style={'height':top_row_max_height-H2_height-5,'maxHeight':top_row_max_height-H2_height-5,'overflowY':'auto'}),
+            ], style={"display": "inline-block", 'vertical-align': 'top', 'textAlign': 'left','marginRight': horizontal_pane_margin,'width': middle_col_width,'height':top_row_max_height,'maxHeight':top_row_max_height}), #,
 
         html.Div(
             [
-                html.Button('RUN',id="run-button"),
+                html.H2(id='H2_3', children='Select Parameters',
+                    style={'textAlign': 'center','height':H2_height}), #,'marginTop': 20
+                html.Div(id = "params-holder"),
+            ],style ={"display": "inline-block",'vertical-align': 'top','textAlign': 'right'}),
+        ],style={'height':top_row_max_height}),html.Hr(), #style={'marginBottom': 60}
+    html.Div(id='middle_row',children=[
+
+        html.Div(
+            [
+                html.Button('RUN',id="run-button",style=BUTTON_DEFAULT_STYLE),
                 dcc.Loading(id='run-message',children=[])
-            ], style={'textAlign': 'center','vertical-align': 'top',"display": "inline-block"})]), #,'marginLeft': 650
+            ], style={'textAlign': 'center','vertical-align': 'top'}),html.Hr(style={'marginBottom': 40})]), #,'marginLeft': 650
 html.Div(
         [
         html.Div(
         [
-                    html.Div(id='config-report',children =[],style={'textAlign': 'left','vertical-align': 'top','width': 580,'height': 300})#
-             ],style={"display": "inline-block",'vertical-align': 'top','textAlign': 'center','marginRight': 200}),
+                    html.Div(id='config-report',children =[],style={'textAlign': 'left','vertical-align': 'top','width': left_col_width,'height': 300})#
+             ],style={"display": "inline-block",'vertical-align': 'top','textAlign': 'center','marginRight': horizontal_pane_margin}),
         html.Div(
             [
                     html.Div(id="stats-out"),
                     html.Div(id = "artifacts-out")
-            ],style={"display": "inline-block",'vertical-align': 'top','textAlign': 'center','marginRight': 200}),
+            ],style={"display": "inline-block",'vertical-align': 'top','textAlign': 'center','marginRight': horizontal_pane_margin,'width': middle_col_width, 'marginRight': horizontal_pane_margin}),
         html.Div(
                 [
 
@@ -184,14 +193,17 @@ html.Div(
 @callback(
 Output('columns_dict',"children",allow_duplicate=True),
     Output('data-pane',"children"),
+    Output('run-button', "style"),
+    Output('run-message', "children",allow_duplicate=True),
    # Input('model-select', 'value'),
     Input('data_metadata_dict', "data"),
     State('dataset-select', 'value'),
+    State('mode-select', 'value'),
     #State('model_metadata_dict', "data"),
     prevent_initial_call = True
 )
 
-def present_columns(data_dict,datasets): #(datasets,models,data_dict,model_dict):
+def present_columns(data_dict,datasets,mode): #(datasets,models,data_dict,model_dict):
 
     #what do we need to know for columns for model run?
     #training:
@@ -209,46 +221,71 @@ def present_columns(data_dict,datasets): #(datasets,models,data_dict,model_dict)
     #add titles for each section.
     #add in logic and indicators for model compatibility.
 
+    standard_excluded = []
+    other_excluded = []
+    errors = []
+    warnings = []
+
     ds_count = len(datasets)
 
-    print(data_dict)
-
-    print(datasets)
-
     standard_cols_counter = Counter([i for sublist in [ast.literal_eval(data_dict[i]['standard_columns']) for i in datasets] for i in sublist])
+
+    non_bio_columns = ['id'] #pipe in split to this, if specified in to be created and linked training parameters
+    for i in non_bio_columns:
+        if i in standard_cols_counter:
+            standard_excluded.append(f'{i} ({standard_cols_counter[i]}/{ds_count}) (not a biological factor column)')
+            del standard_cols_counter[i]
+
     #filter out id from standard columns display, where it never should be used in training.
-    del standard_cols_counter['id']
     standard_cols_counts_display = [f"{x[0]} ({x[1]}/{ds_count})" for x in sorted(standard_cols_counter.items(), key = lambda x: x[1], reverse = True)]
     other_cols_counter = Counter([i for sublist in [ast.literal_eval(data_dict[i]['other_columns']) for i in datasets] for i in sublist])
     other_cols_counts_display = [f"{x[0]} ({x[1]}/{ds_count})" for x in sorted(other_cols_counter.items(), key = lambda x: x[1], reverse = True)]
     wave_counts = []
     valid_waves= 0
-    for i in data_dict:
+    #print(data_dict)
+    for i in datasets:
         if data_dict[i]['wave_number_end_index']!="['-1']":
+            #print(data_dict[i]['wave_number_end_index'])
             wave_counts.append(f"{int(ast.literal_eval(data_dict[i]['wave_number_end_index'])[0])-int(ast.literal_eval(data_dict[i]['wave_number_start_index'])[0])}" + \
                                f";{round(float(ast.literal_eval(data_dict[i]['wave_number_min'])[0]),2)};{round(float(ast.literal_eval(data_dict[i]['wave_number_max'])[0]),2)};" +\
                                f"{round(float(ast.literal_eval(data_dict[i]['wave_number_step'])[0]),2)}")
             valid_waves = valid_waves + 1
 
     wave_counts = set(wave_counts)
-    wav_str = [f"{app_data.wn_string_name} valid: {valid_waves}/{ds_count}, equivalent: {len(set(wave_counts))}/{ds_count}"]
+
+    print(valid_waves != ds_count)
+
+    #for training and inference, do not allow training for partial presence of wav numbers
+    wav_str = f"{app_data.wn_string_name} valid: {valid_waves}/{ds_count}, equivalent: {len(wave_counts)}/{ds_count}"
+    wav_opts = [{"value":wav_str, "label":wav_str,"disabled":True if valid_waves != ds_count else False}]
+
+    print(wav_opts)
 
     #with above, add in model logic (stick flags on display layer and gray out where not valid)
-
+    wav_val = wav_str if valid_waves == ds_count else []
 
     test = [html.Div(children=[html.H4("Wave numbers:"),dcc.Checklist(id='data-pane-wav-numbers',
-                  options=wav_str,  # [9:]if f"datasets/" == i[:8]
-                  value=[], style={'width': 800})]) if len(standard_cols_counts_display)>0 else None,
+                  options=wav_opts,  # [9:]if f"datasets/" == i[:8]
+                  value=wav_val)] if ds_count != 0 else None), #if len(standard_cols_counts_display)>0 or len(other_cols_counts_display)>0 else None
             html.Div(children=[html.H4("Standard columns:"),dcc.Checklist(id='data-pane-columns-std',
-                  options=standard_cols_counts_display,  # [9:]if f"datasets/" == i[:8]
-                  value=[], style={'width': 800})]) if len(standard_cols_counts_display)>0 else None,
+                  options=[{"value":x,"label":x,"disabled":False} for x in standard_cols_counts_display]+[{"value":x,"label":x,"disabled":True} for x in standard_excluded],  # [9:]if f"datasets/" == i[:8]
+                  value=standard_cols_counts_display)]) if len(standard_cols_counts_display)>0 else None,
             html.Div(children=[html.H4("Other columns:"),dcc.Checklist(id='data-pane-columns-oc',
                   options=other_cols_counts_display,  # [9:]if f"datasets/" == i[:8]
-                  value=[], style={'width': 800})]) if len(other_cols_counts_display)>0 else None]
+                  value=[])]) if len(other_cols_counts_display)>0 else None]
 
-    return None,test#data_pane_out,
+    style = BUTTON_DEFAULT_STYLE.copy()
 
+    if len(errors)>0:
+        style.update({"background-color": 'red'})
+        outlist = errors
+    elif len(warnings)>0:
+        style.update({"background-color": 'yellow'})
+        outlist = warnings
+    else:
+        outlist = []
 
+    return None,test,style,(", ").join(outlist) #
 
 @callback(
     Output('model_metadata_dict',"data", allow_duplicate=True),
@@ -598,7 +635,7 @@ def update_output(mode):
     if mode == "Inference":
         definition = "Predict ages without needing age information"
     if mode == "Fine-tuning":
-        definition = "Select a pretrained model and fine-tune it for better performance on smaller datasets"
+        definition = "Fine-tune a pretrained model for better performance on smaller datasets"
     return definition
 
 def extract_metadata(file_object):

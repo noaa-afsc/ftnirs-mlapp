@@ -11,7 +11,8 @@ if os.getenv("HOSTIP") == None and os.getenv("APPPORT") == None:
     load_dotenv('./tmp/.env')
 
 app = dash.Dash(__name__, requests_pathname_prefix=f"/{os.getenv('APPNAME')}/", routes_pathname_prefix=f"/{os.getenv('APPNAME')}/",
-                    external_stylesheets=external_stylesheets, use_pages=True)
+                    external_stylesheets=external_stylesheets,
+                    use_pages=True)
 
 if __name__ == '__main__':
 
