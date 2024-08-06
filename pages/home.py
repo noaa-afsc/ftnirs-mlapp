@@ -1,7 +1,10 @@
 import csv
+from collections import Counter
+import json
 import os
 import tarfile
 import io
+import ast
 import dash
 import dash_daq as daq
 import plotly.graph_objects as go
@@ -35,6 +38,8 @@ def get_objs():
     objs = list(STORAGE_CLIENT.list_blobs(DATA_BUCKET))
     return [i._properties["name"] for i in objs]
 
+
+#should have this return elegible datasets as 1st tuple inelibile as 2nd tuple. (requires metadata check every call... )?
 def get_datasets():
     return [i[9:] for i in get_objs() if "datasets/" == i[:9]]
 
@@ -106,6 +111,7 @@ layout = html.Div(id='parent', children=[
         [dcc.Store(id='params_dicts', storage_type='memory',data = {"params_dict":{},"params_dict_run":{}}),
         dcc.Store(id='dataset_titles', storage_type='memory',data = {}),
         dcc.Store(id='data_metadata_dict', storage_type='memory',data = {}),
+        dcc.Store(id='columns_dict', storage_type='memory', data={}),
         dcc.Store(id='model_metadata_dict', storage_type='memory', data={}),
         dcc.Store(id='run_id', storage_type='memory'),
         html.Div(
@@ -176,6 +182,75 @@ html.Div(
 ])
 
 @callback(
+Output('columns_dict',"children",allow_duplicate=True),
+    Output('data-pane',"children"),
+   # Input('model-select', 'value'),
+    Input('data_metadata_dict', "data"),
+    State('dataset-select', 'value'),
+    #State('model_metadata_dict', "data"),
+    prevent_initial_call = True
+)
+
+def present_columns(data_dict,datasets): #(datasets,models,data_dict,model_dict):
+
+    #what do we need to know for columns for model run?
+    #training:
+    #1. what standard columns and other columns are being used (and their order)
+    #inference:
+    #1. what standard columns and other columns can be used, as well as what's missing
+    #fine tuning:
+    #1 and #2 from above
+
+    #print(datasets)
+    #print(data_dict)
+    #print(model_dict)
+
+    #flatten lists and count instances of each item. Display this info along with column.
+    #add titles for each section.
+    #add in logic and indicators for model compatibility.
+
+    ds_count = len(datasets)
+
+    print(data_dict)
+
+    print(datasets)
+
+    standard_cols_counter = Counter([i for sublist in [ast.literal_eval(data_dict[i]['standard_columns']) for i in datasets] for i in sublist])
+    #filter out id from standard columns display, where it never should be used in training.
+    del standard_cols_counter['id']
+    standard_cols_counts_display = [f"{x[0]} ({x[1]}/{ds_count})" for x in sorted(standard_cols_counter.items(), key = lambda x: x[1], reverse = True)]
+    other_cols_counter = Counter([i for sublist in [ast.literal_eval(data_dict[i]['other_columns']) for i in datasets] for i in sublist])
+    other_cols_counts_display = [f"{x[0]} ({x[1]}/{ds_count})" for x in sorted(other_cols_counter.items(), key = lambda x: x[1], reverse = True)]
+    wave_counts = []
+    valid_waves= 0
+    for i in data_dict:
+        if data_dict[i]['wave_number_end_index']!="['-1']":
+            wave_counts.append(f"{int(ast.literal_eval(data_dict[i]['wave_number_end_index'])[0])-int(ast.literal_eval(data_dict[i]['wave_number_start_index'])[0])}" + \
+                               f";{round(float(ast.literal_eval(data_dict[i]['wave_number_min'])[0]),2)};{round(float(ast.literal_eval(data_dict[i]['wave_number_max'])[0]),2)};" +\
+                               f"{round(float(ast.literal_eval(data_dict[i]['wave_number_step'])[0]),2)}")
+            valid_waves = valid_waves + 1
+
+    wave_counts = set(wave_counts)
+    wav_str = [f"{app_data.wn_string_name} valid: {valid_waves}/{ds_count}, equivalent: {len(set(wave_counts))}/{ds_count}"]
+
+    #with above, add in model logic (stick flags on display layer and gray out where not valid)
+
+
+    test = [html.Div(children=[html.H4("Wave numbers:"),dcc.Checklist(id='data-pane-wav-numbers',
+                  options=wav_str,  # [9:]if f"datasets/" == i[:8]
+                  value=[], style={'width': 800})]) if len(standard_cols_counts_display)>0 else None,
+            html.Div(children=[html.H4("Standard columns:"),dcc.Checklist(id='data-pane-columns-std',
+                  options=standard_cols_counts_display,  # [9:]if f"datasets/" == i[:8]
+                  value=[], style={'width': 800})]) if len(standard_cols_counts_display)>0 else None,
+            html.Div(children=[html.H4("Other columns:"),dcc.Checklist(id='data-pane-columns-oc',
+                  options=other_cols_counts_display,  # [9:]if f"datasets/" == i[:8]
+                  value=[], style={'width': 800})]) if len(other_cols_counts_display)>0 else None]
+
+    return None,test#data_pane_out,
+
+
+
+@callback(
     Output('model_metadata_dict',"data", allow_duplicate=True),
     Input('mode-select', 'value'),
     Input('model-select','options'),
@@ -204,7 +279,6 @@ def update_model_metadata_dict(mode,known_models,selected_models,model_metadata_
 
         uk_models = [k for k in selected_models if k not in mmd_set]
         for k in uk_models:
-            print(k)
             blob = STORAGE_CLIENT.bucket(DATA_BUCKET).get_blob(f'models/{k}')
             if blob == None:
                 print("model does not exist in cloud storage - list not refreshed. bug?")
@@ -221,13 +295,8 @@ def update_model_metadata_dict(mode,known_models,selected_models,model_metadata_
                     # flash a warning, but store in the metadata an indicator that the ds is not eligible
 
                 # upload the flag to
-                print(metadata)
                 model_metadata_dict.update({k:metadata})
                 attach_metadata_to_blob(metadata, blob)
-
-
-    print(len(model_metadata_dict))
-    print(model_metadata_dict)
 
     return model_metadata_dict
 
@@ -273,33 +342,10 @@ def update_data_metadata_dict(known_datasets,selected_datasets,data_metadata_dic
                 #do anything when selected (should make a place in data pane to display this notice).
 
             #upload the flag to
-            data_metadata_dict.update(metadata)
+            data_metadata_dict.update({k:metadata})
             attach_metadata_to_blob(metadata,blob)
 
-    print(len(data_metadata_dict))
-    print(data_metadata_dict)
-
     return data_metadata_dict
-
-    #add feature: if a selected dataset is missing metadata, need to load in, submit, and register
-    #from within this function
-
-#@callback(
-#    Output('data-pane','options'),
-#    Input('dataset-select','value'),
-#    Input('model-select', 'value'),
-#    State('mode-select', 'value'),
-#)
-
-#def populate_data_pane(datasets):
-
-    out_dict = {}
-
-#    for i in datasets:
-#        blob = STORAGE_CLIENT.bucket(DATA_BUCKET).get_blob(f'datasets/{model}')
-
-#        metadata = blob.metadata
-
 
 
 @callback(
@@ -590,8 +636,6 @@ def attach_null_metadata(blob):
 )
 def present_metadata(model_metadata_dict,model,mode):
 
-    print(model_metadata_dict)
-
     if model == None:
         return None
 
@@ -638,7 +682,6 @@ def datasets_to_gcp(filename,contents,data_metadata_dict):
                 #if filename is already in data_metadata_dict, clear it so that the contents will be properly
                 #pulled
 
-                print(i[0])
 
                 if i[0] in data_metadata_dict:
                     print('clearing data_metadata_dict on reupload')
@@ -697,7 +740,6 @@ def models_to_gcp(filename, contents):
     # this gets called by alert on startup as this is an output, make sure to not trigger alert in this case
     if not filename == None and not contents == None:
         for i in zip(filename, contents):
-            print(i[1][0:200])
 
             valid,message,data,metadata = data_check_models(i,load_model = True)
 
@@ -743,8 +785,6 @@ def data_check_datasets(file,load_data = True):
         # avoid behavior of pandas to rename duplicate names
         reader = csv.reader(io.StringIO(decoded.decode('utf-8')))
         columns = next(reader)
-
-        print(columns)
 
         # check that column names are unique
         if len(columns) != len(set(columns)):
@@ -793,13 +833,11 @@ def data_check_datasets(file,load_data = True):
             non_wave_columns = columns[other_cols_start:other_cols_end]
         else:
             non_wave_columns = columns
-            standard_cols = ["-1"]
-            standard_cols_aliases = ["-1"]
-            wave_number_start_index = ["-1"]
-            wave_number_end_index = ["-1"]
-            wave_number_min = ["-1"]
-            wave_number_max = ["-1"]
-            wave_number_step = ["-1"]
+            wave_number_start_index = "-1"
+            wave_number_end_index = "-1"
+            wave_number_min = "-1"
+            wave_number_max = "-1"
+            wave_number_step = "-1"
 
         # classify provided columns into standard and other columns:
 
@@ -833,9 +871,9 @@ def data_check_datasets(file,load_data = True):
 
         # If wav numbers are absent in dataset, supply relevant metadata fields with -1
         metadata = {"standard_columns": standard_cols, "standard_column_aliases": standard_cols_aliases,
-                    "other_columns": other_cols, "wave_number_start_index": wave_number_start_index,
-                    "wave_number_end_index": wave_number_end_index, "wave_number_min": wave_number_min,
-                    "wave_number_max": wave_number_max, "wave_number_step": wave_number_step}
+                    "other_columns": other_cols, "wave_number_start_index": [wave_number_start_index],
+                    "wave_number_end_index": [wave_number_end_index], "wave_number_min": [wave_number_min],
+                    "wave_number_max": [wave_number_max], "wave_number_step": [wave_number_step]}
         if valid:
             return True,"",decoded if load_data else None,metadata #
         else:
@@ -883,8 +921,6 @@ def data_check_models(file,load_model):
 )
 def checklist_params_dict_pop(value,options,_,params_dicts):
 
-    print('in 2')
-
     out_dict = {i: (True if i in value else False) for i in options}
     for i in out_dict:
         params_dicts["params_dict"][i]= out_dict[i]
@@ -899,8 +935,6 @@ def checklist_params_dict_pop(value,options,_,params_dicts):
     prevent_initial_call=True
 )
 def checklist_params_dict_pop_var1_param(value,name,_,params_dicts):
-
-    print('in 1')
 
     params_dicts["params_dict"][name] = value
 

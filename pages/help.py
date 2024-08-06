@@ -1,6 +1,5 @@
 import dash
 from dash import html
-from app_name import app_name
 from dotenv import load_dotenv
 import os
 
