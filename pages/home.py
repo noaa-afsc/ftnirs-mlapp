@@ -43,9 +43,9 @@ def get_objs():
 def get_datasets():
     return [i[9:] for i in get_objs() if "datasets/" == i[:9]]
 
-def get_models():
+def get_pretrained():
     return [i[7:] for i in get_objs() if "models/" == i[:7]]
-def get_archetectures():
+def get_approaches():
     return [i for i in app_data.TRAINING_APPROACHES]
 
 #some graphical variables:
@@ -116,14 +116,14 @@ layout = html.Div(id='parent', children=[
                 duration=4000)
         ]),
     html.Div(id = 'toprow',children=[
-        dcc.Store(id='params_dicts', storage_type='memory',data = {"params_dict":{},"params_dict_run":{}}),
+        dcc.Store(id='params_dict', storage_type='memory',data = {}),
         dcc.Store(id='dataset_titles', storage_type='memory',data = {}),
         dcc.Store(id='data_metadata_dict', storage_type='memory',data = {}),
         dcc.Store(id='columns_dict', storage_type='memory', data={}),
-        dcc.Store(id='model_metadata_dict', storage_type='memory', data={}),
+        dcc.Store(id='pretrained_model_metadata_dict', storage_type='memory', data={}),
         dcc.Store(id='run_id', storage_type='memory'),
-            html.Div(children=[
-            html.Div(children=[
+            html.Div(id='left col top row',children=[
+            html.Div(id='datasets',children=[
                 html.H2(id='H2_1', children='Select Datasets',
                     style={'textAlign': 'left'}),  #'marginTop': 20}
                 dcc.Checklist(id='dataset-select',
@@ -135,18 +135,19 @@ layout = html.Div(id='parent', children=[
                     multiple=True)
             ],style={"display": "inline-block",'vertical-align': 'top','textAlign': 'left'}), #'marginRight': 20
 
-            html.Div(
+            html.Div(id='modes and models',children=
                 [
                     html.H2(id='H2_2', children='Select Mode',
                             style={'textAlign': 'center', 'marginTop': 20, 'textAlign': 'left','height':H2_height}),
                     dcc.Dropdown(id='mode-select', value="Training", clearable=False,
                                  options=["Training", "Inference", "Fine-tuning"],style={'width': 200}), #
                     html.Div(id='mode-select-output', style={'textAlign': 'left'}),
-                    dcc.Dropdown(id='model-select',style={'width': 200}), #
-                    html.Div(id='model-select-output', style={'textAlign': 'left'}),
-                    dcc.Upload(id='upload-model', children=None, multiple=True, style={'textAlign': 'left'})
+                    html.Div(id="pretrained-holder"),
+                    html.Div(id="pretrained-present", style={'textAlign': 'left'}),
+                    html.Div(id="approaches-holder"),
+                    html.Div(id="approaches-present", style={'textAlign': 'left'}),
                 ], style={'vertical-align': 'top', 'textAlign': 'center'}
-            )],style={"display": "inline-block",'marginRight': horizontal_pane_margin,'height': top_row_max_height, 'width': left_col_width}),
+            )],style={"display": "inline-block",'marginRight': horizontal_pane_margin,'height': top_row_max_height, 'width': left_col_width,'maxHeight': top_row_max_height,"overflowY":'auto'}),
 
         html.Div(
             [
@@ -160,7 +161,7 @@ layout = html.Div(id='parent', children=[
                 html.H2(id='H2_3', children='Select Parameters',
                     style={'textAlign': 'center','height':H2_height}), #,'marginTop': 20
                 html.Div(id = "params-holder"),
-            ],style ={"display": "inline-block",'vertical-align': 'top','textAlign': 'right'}),
+            ],style ={"display": "inline-block",'vertical-align': 'top','textAlign': 'left'}),
         ],style={'height':top_row_max_height}),html.Hr(), #style={'marginBottom': 60}
     html.Div(id='middle_row',children=[
 
@@ -195,15 +196,16 @@ Output('columns_dict',"children",allow_duplicate=True),
     Output('data-pane',"children"),
     Output('run-button', "style"),
     Output('run-message', "children",allow_duplicate=True),
-   # Input('model-select', 'value'),
+    Output('run-button', 'disabled'),
     Input('data_metadata_dict', "data"),
+    Input('pretrained_model_metadata_dict', "data"),
     State('dataset-select', 'value'),
     State('mode-select', 'value'),
-    #State('model_metadata_dict', "data"),
+    #State('model-select', 'value'),
     prevent_initial_call = True
 )
 
-def present_columns(data_dict,datasets,mode): #(datasets,models,data_dict,model_dict):
+def present_columns(data_dict,model_dict,datasets,mode): #(datasets,models,data_dict,model_dict):
 
     #what do we need to know for columns for model run?
     #training:
@@ -221,6 +223,8 @@ def present_columns(data_dict,datasets,mode): #(datasets,models,data_dict,model_
     #add titles for each section.
     #add in logic and indicators for model compatibility.
 
+    print(model_dict)
+
     standard_excluded = []
     other_excluded = []
     errors = []
@@ -230,10 +234,16 @@ def present_columns(data_dict,datasets,mode): #(datasets,models,data_dict,model_
 
     standard_cols_counter = Counter([i for sublist in [ast.literal_eval(data_dict[i]['standard_columns']) for i in datasets] for i in sublist])
 
-    non_bio_columns = ['id'] #pipe in split to this, if specified in to be created and linked training parameters
+    non_bio_columns = ['id','split'] #pipe in split to this, if specified in to be created and linked training parameters
     for i in non_bio_columns:
         if i in standard_cols_counter:
             standard_excluded.append(f'{i} ({standard_cols_counter[i]}/{ds_count}) (not a biological factor column)')
+            del standard_cols_counter[i]
+
+    response_columns = ['age'] #pipe in split to this, if specified in to be created and linked training parameters
+    for i in response_columns:
+        if i in standard_cols_counter:
+            standard_excluded.append(f'{i} ({standard_cols_counter[i]}/{ds_count}) (response column)')
             del standard_cols_counter[i]
 
     #filter out id from standard columns display, where it never should be used in training.
@@ -253,13 +263,9 @@ def present_columns(data_dict,datasets,mode): #(datasets,models,data_dict,model_
 
     wave_counts = set(wave_counts)
 
-    print(valid_waves != ds_count)
-
     #for training and inference, do not allow training for partial presence of wav numbers
     wav_str = f"{app_data.wn_string_name} valid: {valid_waves}/{ds_count}, equivalent: {len(wave_counts)}/{ds_count}"
     wav_opts = [{"value":wav_str, "label":wav_str,"disabled":True if valid_waves != ds_count else False}]
-
-    print(wav_opts)
 
     #with above, add in model logic (stick flags on display layer and gray out where not valid)
     wav_val = wav_str if valid_waves == ds_count else []
@@ -275,36 +281,37 @@ def present_columns(data_dict,datasets,mode): #(datasets,models,data_dict,model_
                   value=[])]) if len(other_cols_counts_display)>0 else None]
 
     style = BUTTON_DEFAULT_STYLE.copy()
+    disable_button = False
 
     if len(errors)>0:
         style.update({"background-color": 'red'})
         outlist = errors
+        disable_button = True
     elif len(warnings)>0:
         style.update({"background-color": 'yellow'})
         outlist = warnings
     else:
         outlist = []
 
-    return None,test,style,(", ").join(outlist) #
+    return None,test,style,(", ").join(outlist),disable_button #
 
 @callback(
-    Output('model_metadata_dict',"data", allow_duplicate=True),
-    Input('mode-select', 'value'),
-    Input('model-select','options'),
-    Input('model-select','value'),
-    State('model_metadata_dict',"data"),
+    Output('pretrained_model_metadata_dict',"data", allow_duplicate=True),
+    Input('pretrained-select','options'),
+    Input('pretrained-select','value'),
+    State('pretrained_model_metadata_dict',"data"),
     prevent_initial_call=True
 )
-def update_model_metadata_dict(mode,known_models,selected_models,model_metadata_dict):
+def update_pretrained_metadata_dict(known_pretrained,selected_pretrained,pretrained_model_metadata_dict):
 
-    if mode == "Training" or selected_models == None:
-        return model_metadata_dict
+    if selected_pretrained == None:
+        return pretrained_model_metadata_dict
     else:
 
-        selected_models = [selected_models]
+        selected_pretrained = [selected_pretrained]
 
-        km_set = set(known_models)
-        mmd_set = set(model_metadata_dict)
+        km_set = set(known_pretrained)
+        mmd_set = set(pretrained_model_metadata_dict)
 
         excess_metadata = mmd_set.difference(km_set)
 
@@ -312,18 +319,17 @@ def update_model_metadata_dict(mode,known_models,selected_models,model_metadata_
             # remove out of date metadata
             for k in excess_metadata:
                 print("deleting "+k)
-                del model_metadata_dict[k]
+                del pretrained_model_metadata_dict[k]
 
-        uk_models = [k for k in selected_models if k not in mmd_set]
+        uk_models = [k for k in selected_pretrained if k not in mmd_set]
         for k in uk_models:
             blob = STORAGE_CLIENT.bucket(DATA_BUCKET).get_blob(f'models/{k}')
             if blob == None:
                 print("model does not exist in cloud storage - list not refreshed. bug?")
             elif blob.metadata != None:
-                model_metadata_dict.update({k: blob.metadata})
+                pretrained_model_metadata_dict.update({k: blob.metadata})
             else:
                 data_bytes = blob.download_as_bytes()
-                iobytes = io.BytesIO(data_bytes)
 
                 valid,_,data,metadata = data_check_models((k, "data:application/octet-stream;base64," + base64.b64encode(data_bytes).decode('utf-8')),load_model=True)
 
@@ -332,10 +338,10 @@ def update_model_metadata_dict(mode,known_models,selected_models,model_metadata_
                     # flash a warning, but store in the metadata an indicator that the ds is not eligible
 
                 # upload the flag to
-                model_metadata_dict.update({k:metadata})
+                pretrained_model_metadata_dict.update({k:metadata})
                 attach_metadata_to_blob(metadata, blob)
 
-    return model_metadata_dict
+    return pretrained_model_metadata_dict
 
 
 
@@ -391,9 +397,10 @@ def update_data_metadata_dict(known_datasets,selected_datasets,data_metadata_dic
     State('run-name','value'),
     State('mode-select', 'value'),
     State('run_id', 'data'),
-    State('dataset_titles', 'data')
+    State('dataset_titles', 'data'),
+    State('params_dict', 'data')
 )
-def download_results(n_clicks,run_name,mode,run_id,dataset_titles):
+def download_results(n_clicks,run_name,run_id,dataset_titles,params_dict):
 
     if n_clicks is not None:
 
@@ -424,7 +431,7 @@ def download_results(n_clicks,run_name,mode,run_id,dataset_titles):
             tar.addfile(tarinfo=info, fileobj=obj)
 
             #add model object
-            if mode !="Inference":
+            if params_dict["mode"] !="Inference":
                 blob = STORAGE_CLIENT.bucket(TMP_BUCKET).blob(f"trained_model_{run_id}.hd5")
 
                 obj = io.BytesIO(blob.download_as_bytes())
@@ -448,6 +455,8 @@ def download_results(n_clicks,run_name,mode,run_id,dataset_titles):
 
         return dcc.send_bytes(tar_stream.getvalue(),f"{run_id}_data.tar.gz")
 
+#considering: make instead of reading from params dict, have it loop through different blocks
+#and populate the params dict here. f
 @callback(
     Output('alert-model-run-processing-fail','is_open'),
      Output('alert-model-run-ds-fail','is_open'),
@@ -458,18 +467,38 @@ def download_results(n_clicks,run_name,mode,run_id,dataset_titles):
      Output('artifacts-out', 'children'),
      Output('download-out', 'children'),
      Output('upload-out', 'children', allow_duplicate=True),
-     Output("params_dicts","data"),
+     Output("params_dict","data"),
      Output("dataset_titles", "data"),
      Output("run_id", "data"),
      Input('run-button', 'n_clicks'),
      State('mode-select', 'value'),
-     State('model-select', 'value'),
+     #State('model-select', 'value'),
      State('dataset-select', 'value'),
-     State('params_dicts', 'data'),
+     State('params-holder', 'children'),
      State("dataset_titles", "data"),
     prevent_initial_call=True
  )
-def model_run_event(n_clicks,mode,model,datasets,params_dicts,dataset_titles):
+def model_run_event(n_clicks,mode,model,datasets,params_holder,dataset_titles):
+
+    #loop through and look for "values". if exists options, use values to determine true or false.
+    #Use id as the parameter name, make sure that convention is kept in get_params
+
+    #tested for checklist and daq.toggleswitch- make sure as using new components this accounts for them correctly.
+    params_dict = {}
+    for i in params_holder:
+        for m in i['props']['children']:
+            print(m)
+            if 'value' in m['props']:
+                if 'options' in m['props']:
+                    for p in m['props']['options']:
+                        if p in m['props']['value']:
+                            params_dict[p] = True
+                        else:
+                            params_dict[p] = False
+                else:
+                    params_dict[m['props']['id']] = m['props']['value']
+
+    params_dict['mode']=mode
 
     run_id = "" #set default so if it errors out, still can return outputs
 
@@ -508,13 +537,11 @@ def model_run_event(n_clicks,mode,model,datasets,params_dicts,dataset_titles):
 
         if not any_error:
             try:
-                if params_dicts["params_dict_run"] == {}:
-                    params_dicts["params_dict_run"] = params_dicts["params_dict"]
 
                 # time.time() makes it unique even when parameters are fixed, may want to change behavior later
-                run_id = str(abs(hash("".join(["".join(params_dicts["params_dict_run"]), str(mode), str(model), "".join(datasets)])+str(time.time()))))
+                run_id = str(abs(hash("".join(["".join(params_dict), str(mode), str(model), "".join(datasets)])+str(time.time()))))
 
-                config_dict = params_dicts["params_dict_run"].copy()
+                config_dict = {'params_dict':params_dict}
 
                 config_dict.update({"Datasets":",".join(datasets)})
                 config_dict.update({"Model":model})
@@ -524,8 +551,6 @@ def model_run_event(n_clicks,mode,model,datasets,params_dicts,dataset_titles):
 
                 blob = STORAGE_CLIENT.bucket(TMP_BUCKET).blob(f'config_{run_id}.yml')
                 blob.upload_from_string(config_table.to_csv(), 'text/csv')
-
-                params_dicts["params_dict_run"] = params_dicts["params_dict"]
 
                 config_out_children = [html.Div(id='run-name-block',children =[html.Div(id='run-name-prompt',children = "Run name:"),
                                         dcc.Input(id='run-name', type="text", placeholder="my_unique_pretrained_model_name",style={'textAlign': 'left', 'vertical-align': 'top', 'width': 400}),
@@ -538,7 +563,7 @@ def model_run_event(n_clicks,mode,model,datasets,params_dicts,dataset_titles):
                                        html.Div(id='config-report-datasets',children ='Datasets: ')] +\
                                        [html.Div(id='config-report-datasets-' + i,children="- "+str(i),style={'marginLeft': 15}) for i in datasets] +\
                                        [html.Div(id='config-report-parameters',children ='Parameters: ')] + \
-                                       [html.Div(id='config-report-parameters-' + a,children="- "+a+": "+str(b),style={'marginLeft': 15}) for (a,b) in params_dicts["params_dict"].items()]
+                                       [html.Div(id='config-report-parameters-' + a,children="- "+a+": "+str(b),style={'marginLeft': 15}) for (a,b) in config_dict["params_dict"].items()]
 
                 #this is where model will actually run
                 data,artifacts,stats,dataset_titles = run_model(mode,model,datasets,run_id)
@@ -565,64 +590,58 @@ def model_run_event(n_clicks,mode,model,datasets,params_dicts,dataset_titles):
                             dash_table.DataTable(stats.to_dict('records')),
                         ],style={'textAlign': 'left', 'vertical-align': 'top','width': 400}) if not (processing_fail or any_error) else ""])
 
-        return [processing_fail,ds_fail,model_fail,message,config_out_payload,stats_out,artifacts_out,download_out,html.Button("Upload Trained model", id="btn-upload-model") if mode != "Inference" and not (processing_fail or any_error) else "",params_dicts,dataset_titles,run_id]
+        return [processing_fail,ds_fail,model_fail,message,config_out_payload,stats_out,artifacts_out,download_out,html.Button("Upload Trained model", id="btn-upload-pretrained") if mode != "Inference" and not (processing_fail or any_error) else "",params_dict,dataset_titles,run_id]
+
+#@callback(Output('splits_status',"value"),
+#                Input('params-holder', 'value'),
+
 
 @callback(#Output('params-select', 'options'),
                     #Output('params-select', 'value'),
-                    Output('params_dicts',"data", allow_duplicate=True),
                     Output('params-holder', 'children'),
                     Input('mode-select', 'value'),
-                    Input('model-select', 'value'),
-                    State("params_dicts","data"),
-    prevent_initial_call=True
+                    Input('approaches-select', 'value')
 )
-def get_parameters(mode,model,params_dicts):
+def get_parameters(mode,approach):
 
-    #if this is present, wipe it out
-    params_dicts['params_dict'] = {}
+    params_holder_subcomponents = []
 
-    if model is not None:
-        if mode == 'Inference':
-            #we will ideally want this to read properties of the model object itself to run this.
-            #hopefully will not be particular to a certain model.
+    if approach is not None:
+        if mode == 'Training' or mode == 'Fine-tuning':
 
-            return params_dicts,dcc.Checklist(id='checklist-params', options=["on_GPU"], value=[False])
+            params_holder_subcomponents.append(html.Div(id='Training_params',children=[
+                html.H4("Training"),
+                html.Div('Define splits:'),
+                daq.ToggleSwitch(id='define-splits',value=False)
+            ]))
 
-            #if model == "hello4.hd5":
-            #    return [dcc.Checklist(id='checklist-params', options=["on_GPU","specific other thing","secret third thing"], value=[False,False,False])]
-            #else:
-            #    return []
         #training
-        else:
-            #this will largely be populated manually (hardcoded).  Right now, that will look like Michael explaining to Dan
-            #the relevant training hyperparameters to expose per modeling approach ("archetecture").
-            if model == "michael_deeper_arch":
-                #return ["test"],[],dcc.Slider(0, 20, 5,value=10,id='test-conditional-component')
-                return params_dicts,[dcc.Checklist(id='checklist-params', options=["test"], value=[]),
-                        html.Div(id='var1-param-name',style={'textAlign': 'left'},children="a_specific_param"),
-                        dcc.Slider(0, 20, 5,value=10,id='var1-param')]
-            elif model == "irina_og_arch":
-                #return ["on_GPU","other thing"],[],[]
-                return params_dicts,[dcc.Checklist(id='checklist-params', options=["on_GPU","other thing"], value=[])]
-            elif model == "new_exp_arch":
-                #return ["on_GPU","other thing","secret third thing"],[],[]
-                return params_dicts,[dcc.Checklist(id='checklist-params', options=["on_GPU","other thing","secret third thing"], value=[])]
+        #this will largely be populated manually (hardcoded).  Right now, that will look like Michael explaining to Dan
+        #the relevant training hyperparameters to expose per approach ("archetecture").
+        if approach == "michael_deeper_arch":
+            #return ["test"],[],dcc.Slider(0, 20, 5,value=10,id='test-conditional-component')
+            params_holder_subcomponents.append(html.Div(id='model_params',children=[html.H4("michael_deeper_arch"),dcc.Checklist(id='checklist-params', options=["test"], value=[]),
+                    html.Div(id='a_specific_param-name',style={'textAlign': 'left'},children="a_specific_param"),
+                    dcc.Slider(0, 20, 5,value=10,id='a_specific_param')]))
+        elif approach == "irina_og_arch":
+            params_holder_subcomponents.append(html.Div(id='model_params',children=[html.H4('irina_og_arch'),dcc.Checklist(id='checklist-params', options=["on_GPU","other thing"], value=[])]))
+        elif approach == "new_exp_arch":
+            #return ["on_GPU","other thing","secret third thing"],[],[]
+            params_holder_subcomponents.append(html.Div(id='model_params',children=[html.H4('new_exp_arch'),dcc.Checklist(id='checklist-params', options=["on_GPU","other thing","secret third thing"], value=[])]))
+    elif mode == 'Inference':
+
+            #use the current selection and model metadata dict to locate any model specific inference settings..?
+
+            params_holder_subcomponents.append(html.Div(id = 'Inference_params',children=[
+                html.H4("Inference"),dcc.Checklist(id='checklist-params', options=["on_GPU"], value=[False])
+            ]))
+
     else:
-        return params_dicts,[]
+        return None
+
+    return params_holder_subcomponents
 
 
-@callback(
-    Output('model-select', 'options'),
-    Output('upload-model', 'children'),
-    Input('mode-select', 'value'),
-    Input('alert-model-success', 'is_open')
-)
-def update_model_checklist(mode,is_open):
-
-    if mode != "Training":
-        return get_models(),html.Button('Upload Trained Model(s)')
-    else:
-        return get_archetectures(),None
 
 @callback(
     Output('mode-select-output', 'children'),
@@ -665,29 +684,78 @@ def attach_null_metadata(blob):
 
     blob.patch()
 
+
 @callback(
-    Output('model-select-output', 'children'),
-    Input("model_metadata_dict","data"),
-    State('model-select', 'value'),
-    State('mode-select', 'value')
+    Output('pretrained-holder', 'children'),
+    Input('mode-select', 'value'),
+    Input('alert-model-success', 'is_open')
 )
-def present_metadata(model_metadata_dict,model,mode):
+def update_pretrained_checklist(mode,is_open):
 
-    if model == None:
-        return None
+    if mode != "Training":
+        return [
+            html.H4("Pretrained models:",style={'textAlign':"left"}),
+            dcc.Dropdown(id='pretrained-select', style={'width': 200},options = get_pretrained()),
+            dcc.Upload(id='upload-pretrained', children=html.Button('Upload Pretrained Model(s)'), multiple=True, style={'textAlign': 'left'})
+        ]
+@callback(
+    Output('approaches-holder', 'children'),
+    Input('mode-select', 'value')#,
+    #Input('pretrained-select', 'value')
+)
+def update_approach_checklist(mode):
 
-    if mode == 'Training':
+    print('in update approach checklist')
+    #print(pretrained)
 
-        metadata = app_data.TRAINING_APPROACHES[model]
+    if mode != "Inference":
+        return [
+            html.H4("Training Approaches:",style={'textAlign':"left"}),
+            dcc.Dropdown(id='approaches-select', style={'width': 200},options = get_approaches()),
+        ]
+
+@callback(
+    Output('pretrained-present', 'children'),
+    Output('approach-present', 'children'),
+    Input('pretrained_model_metadata_dict', "data"),
+    Input("mode-select", "value"),
+    State("pretrained-select", "value"),
+    State("approach-present", "children")
+)
+def present_pretrained_metadata(pretrained_model_metadata_dict,mode,pretrained,approach_before):
+
+    if mode != "Training":
+
+        if pretrained!= None:
+            pretrained_metadata = pretrained_model_metadata_dict[pretrained]
+            obj = [html.Div(children=[html.Strong(str(key)), html.Span(f": {pretrained_metadata[key]}")],
+                            style={'marginBottom': 10}) for key in pretrained_metadata]
+            return [html.H5("Pretrained Info:"),html.Div(children=obj)],None
+        else:
+            return None,approach_before
 
     else:
-        #extract metadata from GCP object, if available (lightest option)
+        return None,approach_before
 
-        metadata = model_metadata_dict[model]
+@callback(
+    Output('approaches-present', 'children'),
+    Output('present-present', 'children'),
+    Input("approaches-select", "value"),
+    Input("mode-select", "value"),
+    State("pretrained-present", "children")
+)
+def present_approach_metadata(approach,mode,before):
 
-    # could interpret this a little more: translate to 'return html.Div("File object missing metadata")'
-    # Don't dump all the info, rather, weed out the metadata fields and present the info that is most valuable to the user
-    return [html.Div(children=[html.Strong(str(key)),html.Span(f": {metadata[key]}")],style={'marginBottom': 10}) for key in metadata]
+    if mode != "Inference" and approach != None:
+
+        approach_metadata = app_data.TRAINING_APPROACHES[approach]
+
+        obj = [html.Div(children=[html.Strong(str(key)), html.Span(f": {approach_metadata[key]}")], style={'marginBottom': 10}) for key in approach_metadata]
+
+
+        return [html.H5("Approach Info:"),html.Div(children=obj)],None
+    else:
+        return None,before
 
 @callback(
     Output("data_metadata_dict", "data", allow_duplicate=True),
@@ -769,7 +837,7 @@ def trained_model_publish(n_clicks,run_name,description,run_id):
     Output("alert-model-success", "is_open"),
     Output("alert-model-fail", "is_open"),
     Output("alert-model-fail", "children"),
-    Input('upload-model', 'filename'),Input('upload-model', 'contents')
+    Input('upload-pretrained', 'filename'),Input('upload-pretrained', 'contents')
 )
 def models_to_gcp(filename, contents):
 
@@ -944,38 +1012,6 @@ def data_check_models(file,load_model):
     return valid,message,decoded if load_model else None,metadata
 
     #check that it has the essential metadata fields
-
-
-################################as add parameters, give it this boilerplate:
-
-@callback(Output("params_dicts","data", allow_duplicate=True),
-              Input('checklist-params', 'value'),
-              Input('checklist-params', 'options'),
-              #Input('run-button', 'n_clicks'),
-              Input('params-holder', 'children'),
-              State('params_dicts',"data"),
-    prevent_initial_call=True
-)
-def checklist_params_dict_pop(value,options,_,params_dicts):
-
-    out_dict = {i: (True if i in value else False) for i in options}
-    for i in out_dict:
-        params_dicts["params_dict"][i]= out_dict[i]
-
-    return params_dicts
-
-@callback(Output("params_dicts","data", allow_duplicate=True),
-                Input('var1-param', 'value'),
-                Input('var1-param-name', 'children'),
-                Input('params-holder', 'children'),
-                State('params_dicts', "data"),
-    prevent_initial_call=True
-)
-def checklist_params_dict_pop_var1_param(value,name,_,params_dicts):
-
-    params_dicts["params_dict"][name] = value
-
-    return params_dicts
 
 #this is the  actual ML integration etc. placeholder
 
