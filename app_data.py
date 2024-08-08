@@ -28,7 +28,6 @@ STANDARD_COLUMN_NAMES = {'id':{'data_type':'unq_text','aliases':['File_name','fi
 #currently, just hardcoding parameters as doing this dynamically seems anti-pattern with the framework, and
 #sometimes parameters will need to have interactive effects which needs to be coded in dash.
 #to update the parameters for each approach, hardcode in get_parameters() in app.py
-TRAINING_APPROACHES = {"michael_deeper_arch":{'description':"a new approach with a deeper architecture",'mandatory_cols':[wn_string_name],'excluded_cols':[]},
-                       "irina_og_arch":{'description':"original approach",'mandatory_cols':[wn_string_name],'excluded_cols':[]},
-                       "new_exp_arch":{'description':"an approach that does not use NN",'mandatory_cols':[wn_string_name],'excluded_cols':[]},
-                       "wacky_arch":{'description':"an approach that excludes wave numbers",'mandatory_cols':[],'excluded_cols':[wn_string_name]}}
+#'mandatory_cols':[wn_string_name],'excluded_cols':[]
+TRAINING_APPROACHES = {"Basic model":{'description':"basic, customizable model",'finetunable':True},
+                       "hyperband tuning model":{'description':"A version of the basic model with hyperband parameter tuning",'finetunable':False}}

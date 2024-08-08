@@ -45,15 +45,17 @@ def get_datasets():
 
 def get_pretrained():
     return [i[7:] for i in get_objs() if "models/" == i[:7]]
-def get_approaches():
-    return [i for i in app_data.TRAINING_APPROACHES]
+
 
 #some graphical variables:
-top_row_max_height = 600
-horizontal_pane_margin = 50
-left_col_width = 500
-middle_col_width = 400
-H2_height = 30
+top_row_max_height = 700
+horizontal_pane_margin = 20#50
+left_col_width = "30%" #500
+middle_col_width = "30%" #400
+right_col_width = "30%" #400
+H2_height = 50
+H2_height_below_padding = 30
+checklist_pixel_padding_between = "5px"
 BUTTON_DEFAULT_STYLE = {"font-weight": 900,"width":100,"height":100}
 
 layout = html.Div(id='parent', children=[
@@ -125,10 +127,10 @@ layout = html.Div(id='parent', children=[
             html.Div(id='left col top row',children=[
             html.Div(id='datasets',children=[
                 html.H2(id='H2_1', children='Select Datasets',
-                    style={'textAlign': 'left'}),  #'marginTop': 20}
+                    style={'textAlign': 'center','marginBelow':H2_height_below_padding, 'height':H2_height}),  #'marginTop': 20}
                 dcc.Checklist(id='dataset-select',
                     options=get_datasets(), # [9:]if f"datasets/" == i[:8]
-                    value=[], style={'maxHeight':200,'overflowY':'auto'}),
+                    value=[], style={'maxHeight':200,'overflowY':'auto'},inputStyle={"margin-right":checklist_pixel_padding_between }),
                 dcc.Upload(
                     id='upload-ds',
                     children=html.Button('Upload Dataset(s)'),
@@ -138,30 +140,33 @@ layout = html.Div(id='parent', children=[
             html.Div(id='modes and models',children=
                 [
                     html.H2(id='H2_2', children='Select Mode',
-                            style={'textAlign': 'center', 'marginTop': 20, 'textAlign': 'left','height':H2_height}),
-                    dcc.Dropdown(id='mode-select', value="Training", clearable=False,
-                                 options=["Training", "Inference", "Fine-tuning"],style={'width': 200}), #
-                    html.Div(id='mode-select-output', style={'textAlign': 'left'}),
-                    html.Div(id="pretrained-holder"),
-                    html.Div(id="pretrained-present", style={'textAlign': 'left'}),
-                    html.Div(id="approaches-holder"),
-                    html.Div(id="approaches-present", style={'textAlign': 'left'}),
-                ], style={'vertical-align': 'top', 'textAlign': 'center'}
-            )],style={"display": "inline-block",'marginRight': horizontal_pane_margin,'height': top_row_max_height, 'width': left_col_width,'maxHeight': top_row_max_height,"overflowY":'auto'}),
+                            style={'textAlign': 'center', 'marginTop': 20, 'height':H2_height,'marginBelow':H2_height_below_padding}),
+                    html.Div(id="modes_and_models_body",children=[
+                        dcc.Dropdown(id='mode-select', value="Training", clearable=False,
+                                     options=["Training", "Inference", "Fine-tuning"],style={'width': 200}), #
+                        html.Div(id='mode-select-output', style={'textAlign': 'left'}),
+                        html.H4("Training Approaches:",style={'textAlign':"left"}),
+                        dcc.Dropdown(id='approaches-select', style={'width': 200},options = [i for i in app_data.TRAINING_APPROACHES]),
+                        html.Div(id="approaches-present", style={'textAlign': 'left'}),
+                        html.H4("Pretrained models:",style={'textAlign':"left"}),
+                        dcc.Dropdown(id='pretrained-select', style={'width': 200},options = get_pretrained()),
+                        html.Div(id="pretrained-present", style={'textAlign': 'left'}),
+                        html.Div(id='pretrained-button-upload-holder')], style={'vertical-align': 'top', 'textAlign': 'center','maxHeight': 300,"overflowY":'auto'})])
+                ],style={"display": "inline-block",'marginRight': horizontal_pane_margin,'height': top_row_max_height, 'width': left_col_width}),
 
         html.Div(
             [
                 html.H2(children='Data Columns',
-                        style={'textAlign': 'left','height':H2_height}),
+                        style={'textAlign': 'center','height':H2_height,'marginBelow':H2_height_below_padding}),
                 html.Div(id="data-pane",style={'height':top_row_max_height-H2_height-5,'maxHeight':top_row_max_height-H2_height-5,'overflowY':'auto'}),
             ], style={"display": "inline-block", 'vertical-align': 'top', 'textAlign': 'left','marginRight': horizontal_pane_margin,'width': middle_col_width,'height':top_row_max_height,'maxHeight':top_row_max_height}), #,
 
         html.Div(
             [
                 html.H2(id='H2_3', children='Select Parameters',
-                    style={'textAlign': 'center','height':H2_height}), #,'marginTop': 20
+                    style={'textAlign': 'center','marginBelow':H2_height_below_padding, 'height':H2_height}), #,'marginTop': 20
                 html.Div(id = "params-holder"),
-            ],style ={"display": "inline-block",'vertical-align': 'top','textAlign': 'left'}),
+            ],style ={"display": "inline-block",'vertical-align': 'top','textAlign': 'left','width':right_col_width}),
         ],style={'height':top_row_max_height}),html.Hr(), #style={'marginBottom': 60}
     html.Div(id='middle_row',children=[
 
@@ -186,10 +191,91 @@ html.Div(
 
                     html.Div(id = "download-out"),
                     html.Div(id = "upload-out")
-                ],style={"display": "inline-block",'vertical-align': 'top'})
+                ],style={"display": "inline-block",'vertical-align': 'top','width':right_col_width})
         ],style={"display": "inline-block",'vertical-align': 'top'})
 
 ])
+
+pretrained_upload_button = dcc.Upload(id='upload-pretrained', children=html.Button('Upload Pretrained Model(s)'), multiple=True, style={'textAlign': 'left'})
+@callback(
+    Output('pretrained-select', 'options'),
+    Input('mode-select', 'value'),
+    Input('alert-model-success', 'is_open')
+)
+def update_pretrained_checklist(mode,is_open):
+
+    if mode != "Training":
+        return get_pretrained()
+    else:
+        return []
+@callback(
+    Output('approaches-select', 'options'),
+    Output("pretrained-button-upload-holder", "children"),
+    Input('mode-select', 'value'),
+    Input('pretrained_model_metadata_dict', 'data'),
+    State('pretrained-select', 'value'),
+)
+def update_approach_checklist(mode,pretrain_dict,pretrain_val):
+
+    if mode != "Inference":
+        opts = app_data.TRAINING_APPROACHES
+        if mode == "Fine-tuning":
+            if pretrain_dict != {}:
+                #if/when we add this, make sure we are correctly converting compat_opts value to list
+                if 'compatible_approaches' in pretrain_dict[pretrain_val]:
+                    compat_opts = pretrain_dict[pretrain_val]['compatible_approaches']
+                    opts = {key:val for (key,val) in opts.items() if key in compat_opts}
+            #print(opts)
+            opts = {key:val for (key,val) in opts.items() if opts[key]['finetunable']}
+    if mode == "Training":
+        return [i for i in opts],None
+    elif  mode =="Inference":
+        return [], pretrained_upload_button
+    elif mode =="Fine-tuning":
+        return [i for i in opts],pretrained_upload_button
+
+@callback(
+    Output('approaches-present', 'children'),
+    Input("approaches-select", "value"),
+    Input("mode-select", "value")
+)
+def present_approach_metadata(approach,mode):
+
+
+    hidden_metadata_keys = set({"finetunable"})
+
+    if mode != "Inference" and approach != None:
+
+        approach_metadata = app_data.TRAINING_APPROACHES[approach]
+
+        obj = [html.Div(children=[html.Strong(str(key)), html.Span(f": {approach_metadata[key]}")], style={'marginBottom': 10}) for key in approach_metadata if key not in hidden_metadata_keys]
+
+
+        return [html.Div(children=obj)] #html.H5("Approach Info:"),
+    else:
+        return None
+
+
+@callback(
+    Output('pretrained-present', 'children'),
+    Input('pretrained_model_metadata_dict', "data"),
+    Input("mode-select", "value"),
+    State("pretrained-select", "value")
+)
+def present_pretrained_metadata(pretrained_model_metadata_dict,mode,pretrained):
+
+    if mode != "Training":
+
+        if pretrained!= None:
+            pretrained_metadata = pretrained_model_metadata_dict[pretrained]
+            obj = [html.Div(children=[html.Strong(str(key)), html.Span(f": {pretrained_metadata[key]}")],
+                            style={'marginBottom': 10}) for key in pretrained_metadata]
+            return [html.Div(children=obj)] #html.H5("Pretrained Info:"),
+        else:
+            return None
+
+    else:
+        return None
 
 @callback(
 Output('columns_dict',"children",allow_duplicate=True),
@@ -201,11 +287,12 @@ Output('columns_dict',"children",allow_duplicate=True),
     Input('pretrained_model_metadata_dict', "data"),
     State('dataset-select', 'value'),
     State('mode-select', 'value'),
-    #State('model-select', 'value'),
+    State('pretrained-select', 'value'),
+    State('approaches-select', 'value'),
     prevent_initial_call = True
 )
 
-def present_columns(data_dict,model_dict,datasets,mode): #(datasets,models,data_dict,model_dict):
+def present_columns(data_dict,model_dict,datasets,mode,pretrained_val,approach_val): #(datasets,models,data_dict,model_dict):
 
     #what do we need to know for columns for model run?
     #training:
@@ -222,8 +309,6 @@ def present_columns(data_dict,model_dict,datasets,mode): #(datasets,models,data_
     #flatten lists and count instances of each item. Display this info along with column.
     #add titles for each section.
     #add in logic and indicators for model compatibility.
-
-    print(model_dict)
 
     standard_excluded = []
     other_excluded = []
@@ -272,13 +357,13 @@ def present_columns(data_dict,model_dict,datasets,mode): #(datasets,models,data_
 
     test = [html.Div(children=[html.H4("Wave numbers:"),dcc.Checklist(id='data-pane-wav-numbers',
                   options=wav_opts,  # [9:]if f"datasets/" == i[:8]
-                  value=wav_val)] if ds_count != 0 else None), #if len(standard_cols_counts_display)>0 or len(other_cols_counts_display)>0 else None
+                  value=wav_val,inputStyle={"margin-right":checklist_pixel_padding_between})] if ds_count != 0 else None), #if len(standard_cols_counts_display)>0 or len(other_cols_counts_display)>0 else None
             html.Div(children=[html.H4("Standard columns:"),dcc.Checklist(id='data-pane-columns-std',
                   options=[{"value":x,"label":x,"disabled":False} for x in standard_cols_counts_display]+[{"value":x,"label":x,"disabled":True} for x in standard_excluded],  # [9:]if f"datasets/" == i[:8]
-                  value=standard_cols_counts_display)]) if len(standard_cols_counts_display)>0 else None,
+                  value=standard_cols_counts_display,inputStyle={"margin-right":checklist_pixel_padding_between})]) if len(standard_cols_counts_display)>0 else None,
             html.Div(children=[html.H4("Other columns:"),dcc.Checklist(id='data-pane-columns-oc',
                   options=other_cols_counts_display,  # [9:]if f"datasets/" == i[:8]
-                  value=[])]) if len(other_cols_counts_display)>0 else None]
+                  value=[],inputStyle={"margin-right":checklist_pixel_padding_between})]) if len(other_cols_counts_display)>0 else None]
 
     style = BUTTON_DEFAULT_STYLE.copy()
     disable_button = False
@@ -358,6 +443,8 @@ def update_pretrained_metadata_dict(known_pretrained,selected_pretrained,pretrai
 )
 def update_data_metadata_dict(known_datasets,selected_datasets,data_metadata_dict):
 
+    print(selected_datasets)
+
     kd_set = set(known_datasets)
     dmd_set = set(data_metadata_dict)
 
@@ -387,7 +474,7 @@ def update_data_metadata_dict(known_datasets,selected_datasets,data_metadata_dic
             #upload the flag to
             data_metadata_dict.update({k:metadata})
             attach_metadata_to_blob(metadata,blob)
-
+    print(data_metadata_dict)
     return data_metadata_dict
 
 
@@ -472,13 +559,15 @@ def download_results(n_clicks,run_name,run_id,dataset_titles,params_dict):
      Output("run_id", "data"),
      Input('run-button', 'n_clicks'),
      State('mode-select', 'value'),
-     #State('model-select', 'value'),
+     State('pretrained-select', 'value'),
+     State('approaches-select', 'value'),
+     State('data-pane', 'children'),
      State('dataset-select', 'value'),
      State('params-holder', 'children'),
      State("dataset_titles", "data"),
     prevent_initial_call=True
  )
-def model_run_event(n_clicks,mode,model,datasets,params_holder,dataset_titles):
+def model_run_event(n_clicks,mode,pretrained_model,approach,columns,datasets,params_holder,dataset_titles):
 
     #loop through and look for "values". if exists options, use values to determine true or false.
     #Use id as the parameter name, make sure that convention is kept in get_params
@@ -487,7 +576,6 @@ def model_run_event(n_clicks,mode,model,datasets,params_holder,dataset_titles):
     params_dict = {}
     for i in params_holder:
         for m in i['props']['children']:
-            print(m)
             if 'value' in m['props']:
                 if 'options' in m['props']:
                     for p in m['props']['options']:
@@ -499,6 +587,8 @@ def model_run_event(n_clicks,mode,model,datasets,params_holder,dataset_titles):
                     params_dict[m['props']['id']] = m['props']['value']
 
     params_dict['mode']=mode
+
+    print(params_dict)
 
     run_id = "" #set default so if it errors out, still can return outputs
 
@@ -523,11 +613,13 @@ def model_run_event(n_clicks,mode,model,datasets,params_holder,dataset_titles):
             any_error = True
 
             #payload = False,True,False,"Run Failed: ",[]
-        if model is None:
+
+        #make this specific depending on mode.
+        if pretrained_model is None and approach is None:
             if any_error:
-                message = message + " & no model specified"
+                message = message + " & no training approach or pretrained model specified"
             else:
-                message = message + "no model specified"
+                message = message + "no training approach or pretrained model specified"
             model_fail = True
 
             any_error = True
@@ -539,12 +631,13 @@ def model_run_event(n_clicks,mode,model,datasets,params_holder,dataset_titles):
             try:
 
                 # time.time() makes it unique even when parameters are fixed, may want to change behavior later
-                run_id = str(abs(hash("".join(["".join(params_dict), str(mode), str(model), "".join(datasets)])+str(time.time()))))
+                run_id = str(abs(hash("".join(["".join(params_dict), str(mode), str(approach if approach!=None else ""), str(pretrained_model if pretrained_model!=None else ""), "".join(datasets)])+str(time.time()))))
 
                 config_dict = {'params_dict':params_dict}
 
                 config_dict.update({"Datasets":",".join(datasets)})
-                config_dict.update({"Model":model})
+                config_dict.update({"Pretrained model": pretrained_model})
+                config_dict.update({"Training approach": approach})
                 config_dict.update({"Mode":mode})
 
                 config_table = pd.DataFrame(config_dict,index=[0])
@@ -559,14 +652,16 @@ def model_run_event(n_clicks,mode,model,datasets,params_holder,dataset_titles):
                                                                                 ],style={"display": "inline-block"}) if mode!="Inference" else html.Div(id='run-name-block',children=[html.Div(id='run-name'),html.Div(id='description')]),] +\
                                        [html.Div(id='config-report-rc',children = "Run Configuration:"),
                                        html.Div(id='config-report-mode', children="Mode: "+ mode),
-                                       html.Div(id='config-report-model',children="Model: " + model),
+                                       html.Div(id='config-report-model',children="Pretrained model: " + str(pretrained_model if pretrained_model!=None else "")),
+                                       html.Div(id='config-report-model',children="Training approach: " + str(approach if approach!=None else "")),
                                        html.Div(id='config-report-datasets',children ='Datasets: ')] +\
                                        [html.Div(id='config-report-datasets-' + i,children="- "+str(i),style={'marginLeft': 15}) for i in datasets] +\
                                        [html.Div(id='config-report-parameters',children ='Parameters: ')] + \
                                        [html.Div(id='config-report-parameters-' + a,children="- "+a+": "+str(b),style={'marginLeft': 15}) for (a,b) in config_dict["params_dict"].items()]
 
                 #this is where model will actually run
-                data,artifacts,stats,dataset_titles = run_model(mode,model,datasets,run_id)
+                #if mode == "Training":
+                data,artifacts,stats,dataset_titles = run_model(mode,approach,datasets,run_id)
 
                 message = "Run Succeeded!"
 
@@ -618,13 +713,13 @@ def get_parameters(mode,approach):
         #training
         #this will largely be populated manually (hardcoded).  Right now, that will look like Michael explaining to Dan
         #the relevant training hyperparameters to expose per approach ("archetecture").
-        if approach == "michael_deeper_arch":
+        if approach == "Basic model":
             #return ["test"],[],dcc.Slider(0, 20, 5,value=10,id='test-conditional-component')
-            params_holder_subcomponents.append(html.Div(id='model_params',children=[html.H4("michael_deeper_arch"),dcc.Checklist(id='checklist-params', options=["test"], value=[]),
+            params_holder_subcomponents.append(html.Div(id='model_params',children=[html.H4("Basic model"),dcc.Checklist(id='checklist-params', options=["test"], value=[],inputStyle={"margin-right":checklist_pixel_padding_between}),
                     html.Div(id='a_specific_param-name',style={'textAlign': 'left'},children="a_specific_param"),
                     dcc.Slider(0, 20, 5,value=10,id='a_specific_param')]))
-        elif approach == "irina_og_arch":
-            params_holder_subcomponents.append(html.Div(id='model_params',children=[html.H4('irina_og_arch'),dcc.Checklist(id='checklist-params', options=["on_GPU","other thing"], value=[])]))
+        elif approach == "hyperband tuning model":
+            params_holder_subcomponents.append(html.Div(id='model_params',children=[html.H4('hyperband tuning model'),dcc.Checklist(id='checklist-params', options=["on_GPU","other thing"], value=[],inputStyle={"margin-right":checklist_pixel_padding_between})]))
         elif approach == "new_exp_arch":
             #return ["on_GPU","other thing","secret third thing"],[],[]
             params_holder_subcomponents.append(html.Div(id='model_params',children=[html.H4('new_exp_arch'),dcc.Checklist(id='checklist-params', options=["on_GPU","other thing","secret third thing"], value=[])]))
@@ -633,7 +728,7 @@ def get_parameters(mode,approach):
             #use the current selection and model metadata dict to locate any model specific inference settings..?
 
             params_holder_subcomponents.append(html.Div(id = 'Inference_params',children=[
-                html.H4("Inference"),dcc.Checklist(id='checklist-params', options=["on_GPU"], value=[False])
+                html.H4("Inference"),dcc.Checklist(id='checklist-params', options=["on_GPU"], value=[False],inputStyle={"margin-right":checklist_pixel_padding_between})
             ]))
 
     else:
@@ -652,7 +747,7 @@ def update_output(mode):
     if mode == "Training":
         definition = "Train a model from scratch using a predefined modeling approach"
     if mode == "Inference":
-        definition = "Predict ages without needing age information"
+        definition = "Predict ages with a pretrained model without needing age information"
     if mode == "Fine-tuning":
         definition = "Fine-tune a pretrained model for better performance on smaller datasets"
     return definition
@@ -683,79 +778,6 @@ def attach_null_metadata(blob):
     blob.metadata = {"no_metadata":1}
 
     blob.patch()
-
-
-@callback(
-    Output('pretrained-holder', 'children'),
-    Input('mode-select', 'value'),
-    Input('alert-model-success', 'is_open')
-)
-def update_pretrained_checklist(mode,is_open):
-
-    if mode != "Training":
-        return [
-            html.H4("Pretrained models:",style={'textAlign':"left"}),
-            dcc.Dropdown(id='pretrained-select', style={'width': 200},options = get_pretrained()),
-            dcc.Upload(id='upload-pretrained', children=html.Button('Upload Pretrained Model(s)'), multiple=True, style={'textAlign': 'left'})
-        ]
-@callback(
-    Output('approaches-holder', 'children'),
-    Input('mode-select', 'value')#,
-    #Input('pretrained-select', 'value')
-)
-def update_approach_checklist(mode):
-
-    print('in update approach checklist')
-    #print(pretrained)
-
-    if mode != "Inference":
-        return [
-            html.H4("Training Approaches:",style={'textAlign':"left"}),
-            dcc.Dropdown(id='approaches-select', style={'width': 200},options = get_approaches()),
-        ]
-
-@callback(
-    Output('pretrained-present', 'children'),
-    Output('approach-present', 'children'),
-    Input('pretrained_model_metadata_dict', "data"),
-    Input("mode-select", "value"),
-    State("pretrained-select", "value"),
-    State("approach-present", "children")
-)
-def present_pretrained_metadata(pretrained_model_metadata_dict,mode,pretrained,approach_before):
-
-    if mode != "Training":
-
-        if pretrained!= None:
-            pretrained_metadata = pretrained_model_metadata_dict[pretrained]
-            obj = [html.Div(children=[html.Strong(str(key)), html.Span(f": {pretrained_metadata[key]}")],
-                            style={'marginBottom': 10}) for key in pretrained_metadata]
-            return [html.H5("Pretrained Info:"),html.Div(children=obj)],None
-        else:
-            return None,approach_before
-
-    else:
-        return None,approach_before
-
-@callback(
-    Output('approaches-present', 'children'),
-    Output('present-present', 'children'),
-    Input("approaches-select", "value"),
-    Input("mode-select", "value"),
-    State("pretrained-present", "children")
-)
-def present_approach_metadata(approach,mode,before):
-
-    if mode != "Inference" and approach != None:
-
-        approach_metadata = app_data.TRAINING_APPROACHES[approach]
-
-        obj = [html.Div(children=[html.Strong(str(key)), html.Span(f": {approach_metadata[key]}")], style={'marginBottom': 10}) for key in approach_metadata]
-
-
-        return [html.H5("Approach Info:"),html.Div(children=obj)],None
-    else:
-        return None,before
 
 @callback(
     Output("data_metadata_dict", "data", allow_duplicate=True),
