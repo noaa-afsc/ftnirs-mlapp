@@ -56,6 +56,7 @@ right_col_width = "30%" #400
 H2_height = 50
 H2_height_below_padding = 30
 checklist_pixel_padding_between = "5px"
+left_body_width ="95%"
 BUTTON_DEFAULT_STYLE = {"font-weight": 900,"width":100,"height":100}
 
 layout = html.Div(id='parent', children=[
@@ -121,7 +122,7 @@ layout = html.Div(id='parent', children=[
         dcc.Store(id='params_dict', storage_type='memory',data = {}),
         dcc.Store(id='dataset_titles', storage_type='memory',data = {}),
         dcc.Store(id='data_metadata_dict', storage_type='memory',data = {}),
-        dcc.Store(id='columns_dict', storage_type='memory', data={}),
+        dcc.Store(id='columns_dict', storage_type='memory', data={"wav":[app_data.wn_string_name],'std':[i for i in app_data.STANDARD_COLUMN_NAMES],'oc':[]}),
         dcc.Store(id='pretrained_model_metadata_dict', storage_type='memory', data={}),
         dcc.Store(id='run_id', storage_type='memory'),
             html.Div(id='left col top row',children=[
@@ -130,12 +131,12 @@ layout = html.Div(id='parent', children=[
                     style={'textAlign': 'center','marginBelow':H2_height_below_padding, 'height':H2_height}),  #'marginTop': 20}
                 dcc.Checklist(id='dataset-select',
                     options=get_datasets(), # [9:]if f"datasets/" == i[:8]
-                    value=[], style={'maxHeight':200,'overflowY':'auto'},inputStyle={"margin-right":checklist_pixel_padding_between }),
+                    value=[], style={'maxHeight':200,'overflowY':'auto','width':left_body_width},inputStyle={"margin-right":checklist_pixel_padding_between }),
                 dcc.Upload(
                     id='upload-ds',
                     children=html.Button('Upload Dataset(s)'),
                     multiple=True)
-            ],style={"display": "inline-block",'vertical-align': 'top','textAlign': 'left'}), #'marginRight': 20
+            ],style={'vertical-align': 'top','textAlign': 'left'}), #'marginRight': 20 #"display": "inline-block",
 
             html.Div(id='modes and models',children=
                 [
@@ -151,7 +152,7 @@ layout = html.Div(id='parent', children=[
                         html.H4("Pretrained models:",style={'textAlign':"left"}),
                         dcc.Dropdown(id='pretrained-select', style={'width': 200},options = get_pretrained()),
                         html.Div(id="pretrained-present", style={'textAlign': 'left'}),
-                        html.Div(id='pretrained-button-upload-holder')], style={'vertical-align': 'top', 'textAlign': 'center','maxHeight': 300,"overflowY":'auto'})])
+                        html.Div(id='pretrained-button-upload-holder')], style={'vertical-align': 'top', 'textAlign': 'center','maxHeight': 300,"overflowY":'auto','width':left_body_width})])
                 ],style={"display": "inline-block",'marginRight': horizontal_pane_margin,'height': top_row_max_height, 'width': left_col_width}),
 
         html.Div(
@@ -179,8 +180,8 @@ html.Div(
         [
         html.Div(
         [
-                    html.Div(id='config-report',children =[],style={'textAlign': 'left','vertical-align': 'top','width': left_col_width,'height': 300})#
-             ],style={"display": "inline-block",'vertical-align': 'top','textAlign': 'center','marginRight': horizontal_pane_margin}),
+                    html.Div(id='config-report',children =[],style={'textAlign': 'left','vertical-align': 'top','width': left_body_width,'height': 300})#
+             ],style={"display": "inline-block",'vertical-align': 'top','textAlign': 'center','marginRight': horizontal_pane_margin,'width': left_col_width}),
         html.Div(
             [
                     html.Div(id="stats-out"),
@@ -192,7 +193,7 @@ html.Div(
                     html.Div(id = "download-out"),
                     html.Div(id = "upload-out")
                 ],style={"display": "inline-block",'vertical-align': 'top','width':right_col_width})
-        ],style={"display": "inline-block",'vertical-align': 'top'})
+        ],style={'vertical-align': 'top'}) #"display": "inline-block",
 
 ])
 
@@ -278,7 +279,6 @@ def present_pretrained_metadata(pretrained_model_metadata_dict,mode,pretrained):
         return None
 
 @callback(
-Output('columns_dict',"children",allow_duplicate=True),
     Output('data-pane',"children"),
     Output('run-button', "style"),
     Output('run-message', "children",allow_duplicate=True),
@@ -289,10 +289,11 @@ Output('columns_dict',"children",allow_duplicate=True),
     State('mode-select', 'value'),
     State('pretrained-select', 'value'),
     State('approaches-select', 'value'),
+    State('columns_dict', 'data'),
     prevent_initial_call = True
 )
 
-def present_columns(data_dict,model_dict,datasets,mode,pretrained_val,approach_val): #(datasets,models,data_dict,model_dict):
+def present_columns(data_dict,model_dict,datasets,mode,pretrained_val,approach_val,previous_selections): #(datasets,models,data_dict,model_dict):
 
     #what do we need to know for columns for model run?
     #training:
@@ -322,19 +323,19 @@ def present_columns(data_dict,model_dict,datasets,mode,pretrained_val,approach_v
     non_bio_columns = ['id','split'] #pipe in split to this, if specified in to be created and linked training parameters
     for i in non_bio_columns:
         if i in standard_cols_counter:
-            standard_excluded.append(f'{i} ({standard_cols_counter[i]}/{ds_count}) (not a biological factor column)')
+            standard_excluded.append((str(i),f'{i} ({standard_cols_counter[i]}/{ds_count}) (not a biological factor column)'))
             del standard_cols_counter[i]
 
     response_columns = ['age'] #pipe in split to this, if specified in to be created and linked training parameters
     for i in response_columns:
         if i in standard_cols_counter:
-            standard_excluded.append(f'{i} ({standard_cols_counter[i]}/{ds_count}) (response column)')
+            standard_excluded.append((str(i),f'{i} ({standard_cols_counter[i]}/{ds_count}) (response column)'))
             del standard_cols_counter[i]
 
     #filter out id from standard columns display, where it never should be used in training.
-    standard_cols_counts_display = [f"{x[0]} ({x[1]}/{ds_count})" for x in sorted(standard_cols_counter.items(), key = lambda x: x[1], reverse = True)]
+    standard_cols_counts_display = [(str(x[0]),f"{x[0]} ({x[1]}/{ds_count})") for x in sorted(standard_cols_counter.items(), key = lambda x: x[1], reverse = True)]
     other_cols_counter = Counter([i for sublist in [ast.literal_eval(data_dict[i]['other_columns']) for i in datasets] for i in sublist])
-    other_cols_counts_display = [f"{x[0]} ({x[1]}/{ds_count})" for x in sorted(other_cols_counter.items(), key = lambda x: x[1], reverse = True)]
+    other_cols_counts_display = [(str(x[0]),f"{x[0]} ({x[1]}/{ds_count})") for x in sorted(other_cols_counter.items(), key = lambda x: x[1], reverse = True)]
     wave_counts = []
     valid_waves= 0
     #print(data_dict)
@@ -350,20 +351,25 @@ def present_columns(data_dict,model_dict,datasets,mode,pretrained_val,approach_v
 
     #for training and inference, do not allow training for partial presence of wav numbers
     wav_str = f"{app_data.wn_string_name} valid: {valid_waves}/{ds_count}, equivalent: {len(wave_counts)}/{ds_count}"
-    wav_opts = [{"value":wav_str, "label":wav_str,"disabled":True if valid_waves != ds_count else False}]
 
-    #with above, add in model logic (stick flags on display layer and gray out where not valid)
-    wav_val = wav_str if valid_waves == ds_count else []
+
+
+    wav_opts = [{"value":app_data.wn_string_name, "label":wav_str,"disabled":True if valid_waves != ds_count else False}]
+
+    #consolidate all values, and apply previous selections (as relevant)
+
+    wav_val = [] if valid_waves != ds_count else previous_selections['wav']
+    std_val = [m for m in [x[0] for x in standard_cols_counts_display] if m in previous_selections['std']]
 
     test = [html.Div(children=[html.H4("Wave numbers:"),dcc.Checklist(id='data-pane-wav-numbers',
                   options=wav_opts,  # [9:]if f"datasets/" == i[:8]
                   value=wav_val,inputStyle={"margin-right":checklist_pixel_padding_between})] if ds_count != 0 else None), #if len(standard_cols_counts_display)>0 or len(other_cols_counts_display)>0 else None
             html.Div(children=[html.H4("Standard columns:"),dcc.Checklist(id='data-pane-columns-std',
-                  options=[{"value":x,"label":x,"disabled":False} for x in standard_cols_counts_display]+[{"value":x,"label":x,"disabled":True} for x in standard_excluded],  # [9:]if f"datasets/" == i[:8]
-                  value=standard_cols_counts_display,inputStyle={"margin-right":checklist_pixel_padding_between})]) if len(standard_cols_counts_display)>0 else None,
+                  options=[{"value":x[0],"label":x[1],"disabled":False} for x in standard_cols_counts_display]+[{"value":x[0],"label":x[1],"disabled":True} for x in standard_excluded],  # [9:]if f"datasets/" == i[:8]
+                  value=std_val,inputStyle={"margin-right":checklist_pixel_padding_between})]) if len(standard_cols_counts_display)>0 else None,
             html.Div(children=[html.H4("Other columns:"),dcc.Checklist(id='data-pane-columns-oc',
-                  options=other_cols_counts_display,  # [9:]if f"datasets/" == i[:8]
-                  value=[],inputStyle={"margin-right":checklist_pixel_padding_between})]) if len(other_cols_counts_display)>0 else None]
+                  options=[{"value":x[0],"label":x[1],"disabled":False} for x in other_cols_counts_display],  # [9:]if f"datasets/" == i[:8]
+                  value=previous_selections['oc'],inputStyle={"margin-right":checklist_pixel_padding_between})]) if len(other_cols_counts_display)>0 else None]
 
     style = BUTTON_DEFAULT_STYLE.copy()
     disable_button = False
@@ -378,7 +384,7 @@ def present_columns(data_dict,model_dict,datasets,mode,pretrained_val,approach_v
     else:
         outlist = []
 
-    return None,test,style,(", ").join(outlist),disable_button #
+    return test,style,(", ").join(outlist),disable_button #
 
 @callback(
     Output('pretrained_model_metadata_dict',"data", allow_duplicate=True),
@@ -542,6 +548,95 @@ def download_results(n_clicks,run_name,run_id,dataset_titles,params_dict):
 
         return dcc.send_bytes(tar_stream.getvalue(),f"{run_id}_data.tar.gz")
 
+#test: function to export values from data_columns after change
+
+
+
+@callback(Output("columns_dict",'data', allow_duplicate=True),
+          Input("data-pane-wav-numbers","value"),
+          State("columns_dict", "data"),
+        prevent_initial_call=True
+          )
+def update_wav_nums(wav,prev):
+
+    prev['wav'] = wav
+
+    print(prev)
+
+    return prev
+
+@callback(Output("columns_dict",'data', allow_duplicate=True),
+          Input("data-pane-columns-std","value"),
+          Input("data-pane-columns-std", "options"),
+          State("columns_dict", "data"),
+        prevent_initial_call=True
+          )
+def update_std_col(std,std_opts,prev):
+
+    #only make changes if the changes were represented in options.
+    print(std)
+    print(std_opts)
+
+    #remove if unselected
+    for i in std_opts:
+        if i['value'] in prev['std'] and i['value'] not in std:
+            prev['std'].remove(i['value'])
+    #add if selected
+    for i in std:
+        if i not in prev['std']:
+            prev['std'].append(i)
+
+    return prev
+
+@callback(Output("columns_dict",'data', allow_duplicate=True),
+          Input("data-pane-columns-oc","value"),
+          Input("data-pane-columns-oc", "options"),
+          State("columns_dict", "data"),
+        prevent_initial_call=True
+          )
+def update_oc_col(oc,oc_opts,prev):
+
+    #remove if unselected
+    for i in oc_opts:
+        if i['value'] in prev['oc'] and i['value'] not in oc:
+            prev['oc'].remove(i['value'])
+    #add if selected
+    for i in oc:
+        if i not in prev['oc']:
+            prev['oc'].append(i)
+
+    return prev
+
+
+
+
+#function to recursively unpack the params_holder object to be able to get at nested parameters..
+def unpack_children_for_values(out_dict,children):
+    # tested for checklist and daq.toggleswitch- make sure as using new components this accounts for them correctly.
+
+    if isinstance(children,dict):
+        if 'value' in children:
+            if 'options' in children:
+                for p in children['options']:
+                    if isinstance(p,dict):
+                        p = p['value']
+                    if p in children['value']:
+                        out_dict[p] = True
+                    else:
+                        out_dict[p] = False
+            elif 'id' in children:
+                #print(children)
+                out_dict[children['id']] = children['value']
+
+        for key in children:
+            out_dict = unpack_children_for_values(out_dict,children[key])
+    elif isinstance(children,list):
+        for item in children:
+            out_dict = unpack_children_for_values(out_dict, item)
+
+    return out_dict
+
+
 #considering: make instead of reading from params dict, have it loop through different blocks
 #and populate the params dict here. f
 @callback(
@@ -571,26 +666,6 @@ def model_run_event(n_clicks,mode,pretrained_model,approach,columns,datasets,par
 
     #loop through and look for "values". if exists options, use values to determine true or false.
     #Use id as the parameter name, make sure that convention is kept in get_params
-
-    #tested for checklist and daq.toggleswitch- make sure as using new components this accounts for them correctly.
-    params_dict = {}
-    for i in params_holder:
-        for m in i['props']['children']:
-            if 'value' in m['props']:
-                if 'options' in m['props']:
-                    for p in m['props']['options']:
-                        if p in m['props']['value']:
-                            params_dict[p] = True
-                        else:
-                            params_dict[p] = False
-                else:
-                    params_dict[m['props']['id']] = m['props']['value']
-
-    params_dict['mode']=mode
-
-    print(params_dict)
-
-    run_id = "" #set default so if it errors out, still can return outputs
 
     if n_clicks is not None:
 
@@ -626,9 +701,15 @@ def model_run_event(n_clicks,mode,pretrained_model,approach,columns,datasets,par
             config_out_payload = []
             #payload = False,False,False,"Run Failed: no model specified",[]
 
+        #print(params_dict)
 
+        run_id = ""  # set default so if it errors out, still can return outputs
         if not any_error:
             try:
+
+                params_dict = unpack_children_for_values({},params_holder)
+
+                params_dict['mode'] = mode
 
                 # time.time() makes it unique even when parameters are fixed, may want to change behavior later
                 run_id = str(abs(hash("".join(["".join(params_dict), str(mode), str(approach if approach!=None else ""), str(pretrained_model if pretrained_model!=None else ""), "".join(datasets)])+str(time.time()))))
@@ -645,11 +726,11 @@ def model_run_event(n_clicks,mode,pretrained_model,approach,columns,datasets,par
                 blob = STORAGE_CLIENT.bucket(TMP_BUCKET).blob(f'config_{run_id}.yml')
                 blob.upload_from_string(config_table.to_csv(), 'text/csv')
 
-                config_out_children = [html.Div(id='run-name-block',children =[html.Div(id='run-name-prompt',children = "Run name:"),
-                                        dcc.Input(id='run-name', type="text", placeholder="my_unique_pretrained_model_name",style={'textAlign': 'left', 'vertical-align': 'top', 'width': 400}),
+                config_out_children = [html.Div(id='config-body',children=[html.Div(id='run-name-block',children =[html.Div(id='run-name-prompt',children = "Run name:"),
+                                        dcc.Input(id='run-name', type="text", placeholder="my_unique_pretrained_model_name",style={'textAlign': 'left', 'vertical-align': 'top','width':"150%"}),
                                                                                html.Div(id='description-prompt', children="Description:"),
-                                        dcc.Textarea(id='description',style={'textAlign': 'left','vertical-align': 'top','width': 400,'height':100})
-                                                                                ],style={"display": "inline-block"}) if mode!="Inference" else html.Div(id='run-name-block',children=[html.Div(id='run-name'),html.Div(id='description')]),] +\
+                                        dcc.Textarea(id='description',style={'textAlign': 'left','vertical-align': 'top','height':100,'width':"150%"})
+                                                                                ],style={"display": "inline-block"}) if mode!="Inference" else html.Div(id='run-name-block',children=[html.Div(id='run-name'),html.Div(id='description')])] +\
                                        [html.Div(id='config-report-rc',children = "Run Configuration:"),
                                        html.Div(id='config-report-mode', children="Mode: "+ mode),
                                        html.Div(id='config-report-model',children="Pretrained model: " + str(pretrained_model if pretrained_model!=None else "")),
@@ -657,7 +738,7 @@ def model_run_event(n_clicks,mode,pretrained_model,approach,columns,datasets,par
                                        html.Div(id='config-report-datasets',children ='Datasets: ')] +\
                                        [html.Div(id='config-report-datasets-' + i,children="- "+str(i),style={'marginLeft': 15}) for i in datasets] +\
                                        [html.Div(id='config-report-parameters',children ='Parameters: ')] + \
-                                       [html.Div(id='config-report-parameters-' + a,children="- "+a+": "+str(b),style={'marginLeft': 15}) for (a,b) in config_dict["params_dict"].items()]
+                                       [html.Div(id='config-report-parameters-' + a,children="- "+a+": "+str(b),style={'marginLeft': 15}) for (a,b) in config_dict["params_dict"].items()],style={'width': left_body_width})]
 
                 #this is where model will actually run
                 #if mode == "Training":
@@ -676,21 +757,37 @@ def model_run_event(n_clicks,mode,pretrained_model,approach,columns,datasets,par
         download_out = [html.Div([html.Button("Download Results", id="btn-download-results"),
                     dcc.Download(id="download-results")]) if not (processing_fail or any_error) else ""]
 
-        artifacts_out = html.Div(artifacts,style={'textAlign': 'left', 'vertical-align': 'top','width': 400})
+        artifacts_out = html.Div(artifacts,style={'textAlign': 'left', 'vertical-align': 'top'})
 
         stats_out = html.Div([
                         html.Div(
                         [
                             html.Div(id='stats-title',children="Run stats:"),
                             dash_table.DataTable(stats.to_dict('records')),
-                        ],style={'textAlign': 'left', 'vertical-align': 'top','width': 400}) if not (processing_fail or any_error) else ""])
+                        ],style={'textAlign': 'left', 'vertical-align': 'top'}) if not (processing_fail or any_error) else ""])
 
-        return [processing_fail,ds_fail,model_fail,message,config_out_payload,stats_out,artifacts_out,download_out,html.Button("Upload Trained model", id="btn-upload-pretrained") if mode != "Inference" and not (processing_fail or any_error) else "",params_dict,dataset_titles,run_id]
-
-#@callback(Output('splits_status',"value"),
-#                Input('params-holder', 'value'),
+        return [processing_fail,ds_fail,model_fail,message,config_out_payload,stats_out,artifacts_out,download_out,html.Button("Upload Trained model", id="btn-upload-pretrained") if mode != "Inference" and not (processing_fail or any_error) else "",params_dict if not (processing_fail or any_error) else "",dataset_titles,run_id]
 
 
+@callback(Output('train_val',"children"),
+                Output('val_val',"children"),
+                Output('test_val', "children"),
+                Input('splits-slider', 'value')
+          )
+def test_fxn2(slider_val):
+
+   return f"Train (%): {slider_val[0]}",f"Validation (%): {slider_val[1]-slider_val[0]}",f"Test (%): {100-slider_val[1]}"
+@callback(Output('splits_status',"children"),
+                Output('splits_choice',"children"),
+                Input('define-splits', 'value')
+          )
+def test_fxn(splits_val):
+
+    #return f"Define splits: {splits_val}",[html.H5("| -- Train -- | -- Val -- | -- Test -- |"),dcc.RangeSlider(0, 100, 5, value=[60, 80], id='splits-slider', allowCross=False),html.Div("0% to the first value is the training split, the first value to the second value is the validation split, and the second value to 100% is test. Numbers represent percentages. Train and val must each be > 0%"),] if splits_val else None
+
+    return f"Define splits: {splits_val}", [html.Div(id='train_val'),html.Div(id='val_val'),html.Div(id='test_val'),
+                                            dcc.RangeSlider(0, 100, 1, marks = {x*5:x*5 for x in range(20)}, value=[60, 80], id='splits-slider',
+                                                            allowCross=False)]  if splits_val else None
 @callback(#Output('params-select', 'options'),
                     #Output('params-select', 'value'),
                     Output('params-holder', 'children'),
@@ -706,8 +803,9 @@ def get_parameters(mode,approach):
 
             params_holder_subcomponents.append(html.Div(id='Training_params',children=[
                 html.H4("Training"),
-                html.Div('Define splits:'),
-                daq.ToggleSwitch(id='define-splits',value=False)
+                html.Div(id='splits_status',children='Define splits: False'),
+                daq.ToggleSwitch(id='define-splits',value=False),
+                html.Div(id='splits_choice')
             ]))
 
         #training
@@ -745,7 +843,7 @@ def get_parameters(mode,approach):
 def update_output(mode):
 
     if mode == "Training":
-        definition = "Train a model from scratch using a predefined modeling approach"
+        definition = "Create a model from scratch using a training approach"
     if mode == "Inference":
         definition = "Predict ages with a pretrained model without needing age information"
     if mode == "Fine-tuning":
