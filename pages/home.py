@@ -320,6 +320,10 @@ def present_columns(data_dict,model_dict,datasets,mode,pretrained_val,approach_v
     #add titles for each section.
     #add in logic and indicators for model compatibility.
 
+    #prevent unnecessary remaining logic in fxn and importantly a divide by 0 case
+    if len(datasets) == 0:
+        return None
+
     standard_excluded = []
     other_excluded = []
 
@@ -347,13 +351,13 @@ def present_columns(data_dict,model_dict,datasets,mode,pretrained_val,approach_v
     non_bio_columns = ['id','split'] #pipe in split to this, if specified in to be created and linked training parameters
     for i in non_bio_columns:
         if i in standard_cols_counter:
-            standard_excluded.append((str(i),f'{i} ({standard_cols_counter[i]}/{ds_count}) (not a biological factor column)'))
+            standard_excluded.append((str(i),f'{i} ({standard_cols_counter[i]}/{ds_count}) (not a biological factor column)',standard_cols_counter[i]/ds_count))
             del standard_cols_counter[i]
 
     response_columns = ['age'] #pipe in split to this, if specified in to be created and linked training parameters
     for i in response_columns:
         if i in standard_cols_counter:
-            standard_excluded.append((str(i),f'{i} ({standard_cols_counter[i]}/{ds_count}) (response column)'))
+            standard_excluded.append((str(i),f'{i} ({standard_cols_counter[i]}/{ds_count}) (response column)',standard_cols_counter[i]/ds_count))
             del standard_cols_counter[i]
 
     wavs_exclude = False
@@ -368,13 +372,13 @@ def present_columns(data_dict,model_dict,datasets,mode,pretrained_val,approach_v
                 #exclude standard
                 pretrained_exclude = [i for i in standard_cols_counter if i not in pretrained_include]
                 for i in pretrained_exclude:
-                    standard_excluded.append((str(i),f'{i} ({standard_cols_counter[i]}/{ds_count}) (not used in pretrained model)'))
+                    standard_excluded.append((str(i),f'{i} ({standard_cols_counter[i]}/{ds_count}) (not used in pretrained model)',standard_cols_counter[i]/ds_count))
                     del standard_cols_counter[i]
 
                 #exclude other cols
                 pretrained_exclude = [i for i in other_cols_counter if i not in pretrained_include]
                 for i in pretrained_exclude:
-                    other_excluded.append((str(i),f'{i} ({other_cols_counter[i]}/{ds_count}) (not used in pretrained model)'))
+                    other_excluded.append((str(i),f'{i} ({other_cols_counter[i]}/{ds_count}) (not used in pretrained model)',other_cols_counter[i]/ds_count))
                     del other_cols_counter[i]
         elif mode == "Fine-tuning":
             pass
@@ -383,19 +387,20 @@ def present_columns(data_dict,model_dict,datasets,mode,pretrained_val,approach_v
             #print(standard_excluded)
 
     #filter out id from standard columns display, where it never should be used in training.
-    standard_cols_counts_display = [(str(x[0]),f"{x[0]} ({x[1]}/{ds_count})") for x in sorted(standard_cols_counter.items(), key = lambda x: x[1], reverse = True)]
-    other_cols_counts_display = [(str(x[0]),f"{x[0]} ({x[1]}/{ds_count})") for x in sorted(other_cols_counter.items(), key = lambda x: x[1], reverse = True)]
+    standard_cols_counts_display = [(str(x[0]),f"{x[0]} ({x[1]}/{ds_count})",x[1]/ds_count) for x in sorted(standard_cols_counter.items(), key = lambda x: x[1], reverse = True)]
+    other_cols_counts_display = [(str(x[0]),f"{x[0]} ({x[1]}/{ds_count})",x[1]/ds_count) for x in sorted(other_cols_counter.items(), key = lambda x: x[1], reverse = True)]
 
-    wav_opts = [{"value":app_data.wn_string_name, "label":wav_str,"disabled":True if (valid_waves != ds_count or wavs_exclude) else False}]
+    wav_opts = [{"value":app_data.wn_string_name, "label":wav_str,"disabled":True if (valid_waves != ds_count or wavs_exclude) else False,
+                 'extra':(valid_waves/ds_count,len(wave_counts)/ds_count)}]
 
     #consolidate all values, and apply previous selections (as relevant)
 
     wav_val = [] if (valid_waves != ds_count or wavs_exclude) else previous_selections['wav'] #previous_selections['wav']
 
-    std_opts = [{"value":x[0],"label":x[1],"disabled":False} for x in standard_cols_counts_display]+[{"value":x[0],"label":x[1],"disabled":True} for x in standard_excluded]
+    std_opts = [{"value":x[0],"label":x[1],"disabled":False,'extra':x[2]} for x in standard_cols_counts_display]+[{"value":x[0],"label":x[1],"disabled":True,'extra':x[2]} for x in standard_excluded]
     std_val = [m for m in [x[0] for x in standard_cols_counts_display] if m in previous_selections['std']]
-    oc_opts = [{"value":x[0],"label":x[1],"disabled":False} for x in other_cols_counts_display]+[{"value":x[0],"label":x[1],"disabled":True} for x in other_excluded]
-    oc_val = [m for m in [x[0] for x in other_cols_counts_display] if m in previous_selections['std']]
+    oc_opts = [{"value":x[0],"label":x[1],"disabled":False,'extra':x[2]} for x in other_cols_counts_display]+[{"value":x[0],"label":x[1],"disabled":True,'extra':x[2]} for x in other_excluded]
+    oc_val = [m for m in [x[0] for x in other_cols_counts_display] if m in previous_selections['oc']]
 
 
     children = [html.Div(children=[html.H4("Wave numbers:"),dcc.Checklist(id='data-pane-wav-numbers',
@@ -472,8 +477,6 @@ def update_pretrained_metadata_dict(known_pretrained,selected_pretrained,pretrai
     prevent_initial_call=True
 )
 def update_data_metadata_dict(known_datasets,selected_datasets,data_metadata_dict):
-
-    print(selected_datasets)
 
     kd_set = set(known_datasets)
     dmd_set = set(data_metadata_dict)
@@ -598,18 +601,6 @@ def update_wav_nums(wav,prev):
           )
 def update_std_col(std,std_opts,prev):
 
-    #for i in std_opts:
-    #    if i['value'] in prev['std'] and i['value'] not in std and not i['disabled']:
-    #        prev['std'].remove(i['value'])
-    #add if selected
-    #for i in std:
-    #    if i not in prev['std']:
-    #        prev['std'].add(i)
-
-    #return prev
-
-    #only make changes if the changes were represented in options.
-
     #remove if unselected
     for i in std_opts:
         if i['value'] in prev['std'] and i['value'] not in std and not i['disabled']:
@@ -666,6 +657,29 @@ def unpack_children_for_values(out_dict,children):
 
     return out_dict
 
+#version of this which assumes 'extra' metadata might be present
+def unpack_data_pane_values_extra(out_dict,children):
+    # tested for checklist and daq.toggleswitch- make sure as using new components this accounts for them correctly.
+
+    if isinstance(children,dict):
+        if 'value' in children:
+            if 'options' in children:
+                for p in children['options']:
+                    if isinstance(p,dict):
+                        out_dict[p['value']] = {}
+                    if p['value'] in children['value']:
+                        out_dict[p['value']]['selected'] = True
+                    else:
+                        out_dict[p['value']]['selected'] = False
+                    out_dict[p['value']]['extra'] = p['extra']
+        for key in children:
+            out_dict = unpack_data_pane_values_extra(out_dict,children[key])
+    elif isinstance(children,list):
+        for item in children:
+            out_dict = unpack_data_pane_values_extra(out_dict, item)
+
+    return out_dict
+
 
 #considering: make instead of reading from params dict, have it loop through different blocks
 #and populate the params dict here. f
@@ -697,7 +711,8 @@ def model_run_event(n_clicks,mode,pretrained_model,approach,columns,datasets,par
     #loop through and look for "values". if exists options, use values to determine true or false.
     #Use id as the parameter name, make sure that convention is kept in get_params
 
-    data_pane_vals_dict = unpack_children_for_values({}, columns)
+    #this object enables us to use the 'selected' and 'extra' (for wavs, (%valid,%equivalent) and for others % present in total ds) and assess whether it is fine, warning, or error
+    data_pane_vals_dict = unpack_data_pane_values_extra({}, columns)
 
     if n_clicks is not None:
 
