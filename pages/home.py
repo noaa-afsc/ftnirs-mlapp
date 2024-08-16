@@ -292,9 +292,6 @@ def present_pretrained_metadata(pretrained_model_metadata_dict,mode,pretrained):
 
 @callback(
     Output('data-pane',"children"),
-    Output('run-button', "style"),
-    Output('run-message', "children",allow_duplicate=True),
-    Output('run-button', 'disabled'),
     Input('data_metadata_dict', "data"),
     Input('pretrained_model_metadata_dict', "data"),
     State('dataset-select', 'value'),
@@ -307,7 +304,6 @@ def present_pretrained_metadata(pretrained_model_metadata_dict,mode,pretrained):
 
 def present_columns(data_dict,model_dict,datasets,mode,pretrained_val,approach_val,previous_selections): #(datasets,models,data_dict,model_dict):
 
-    print(previous_selections['oc'])
     #what do we need to know for columns for model run?
     #training:
     #1. what standard columns and other columns are being used (and their order)
@@ -326,8 +322,6 @@ def present_columns(data_dict,model_dict,datasets,mode,pretrained_val,approach_v
 
     standard_excluded = []
     other_excluded = []
-    errors = []
-    warnings = []
 
     ds_count = len(datasets)
 
@@ -401,12 +395,10 @@ def present_columns(data_dict,model_dict,datasets,mode,pretrained_val,approach_v
     std_opts = [{"value":x[0],"label":x[1],"disabled":False} for x in standard_cols_counts_display]+[{"value":x[0],"label":x[1],"disabled":True} for x in standard_excluded]
     std_val = [m for m in [x[0] for x in standard_cols_counts_display] if m in previous_selections['std']]
     oc_opts = [{"value":x[0],"label":x[1],"disabled":False} for x in other_cols_counts_display]+[{"value":x[0],"label":x[1],"disabled":True} for x in other_excluded]
-    oc_val = previous_selections['oc']
-
-    print(previous_selections['oc'])
+    oc_val = [m for m in [x[0] for x in other_cols_counts_display] if m in previous_selections['std']]
 
 
-    test = [html.Div(children=[html.H4("Wave numbers:"),dcc.Checklist(id='data-pane-wav-numbers',
+    children = [html.Div(children=[html.H4("Wave numbers:"),dcc.Checklist(id='data-pane-wav-numbers',
                   options=wav_opts,  # [9:]if f"datasets/" == i[:8]
                   value=wav_val,inputStyle={"margin-right":checklist_pixel_padding_between})] if ds_count != 0 else None), #if len(standard_cols_counts_display)>0 or len(other_cols_counts_display)>0 else None
             html.Div(children=[html.H4("Standard columns:"),dcc.Checklist(id='data-pane-columns-std',
@@ -416,20 +408,7 @@ def present_columns(data_dict,model_dict,datasets,mode,pretrained_val,approach_v
                   options=oc_opts,  # [9:]if f"datasets/" == i[:8]
                   value=oc_val,inputStyle={"margin-right":checklist_pixel_padding_between})]) if (len(other_cols_counts_display)+len(other_excluded))>0 else None]
 
-    style = BUTTON_DEFAULT_STYLE.copy()
-    disable_button = False
-
-    if len(errors)>0:
-        style.update({"background-color": 'red'})
-        outlist = errors
-        disable_button = True
-    elif len(warnings)>0:
-        style.update({"background-color": 'yellow'})
-        outlist = warnings
-    else:
-        outlist = []
-
-    return test,style,(", ").join(outlist),disable_button #
+    return children
 
 @callback(
     Output('pretrained_model_metadata_dict',"data", allow_duplicate=True),
@@ -525,7 +504,7 @@ def update_data_metadata_dict(known_datasets,selected_datasets,data_metadata_dic
             #upload the flag to
             data_metadata_dict.update({k:metadata})
             attach_metadata_to_blob(metadata,blob)
-    print(data_metadata_dict)
+
     return data_metadata_dict
 
 
@@ -718,6 +697,8 @@ def model_run_event(n_clicks,mode,pretrained_model,approach,columns,datasets,par
     #loop through and look for "values". if exists options, use values to determine true or false.
     #Use id as the parameter name, make sure that convention is kept in get_params
 
+    data_pane_vals_dict = unpack_children_for_values({}, columns)
+
     if n_clicks is not None:
 
         message = "Run Failed: "
@@ -751,6 +732,17 @@ def model_run_event(n_clicks,mode,pretrained_model,approach,columns,datasets,par
             any_error = True
             config_out_payload = []
             #payload = False,False,False,"Run Failed: no model specified",[]
+
+        if not any([data_pane_vals_dict[n] for n in data_pane_vals_dict]):
+            if any_error:
+                message = message + " & data error: no valid columns for operation"
+            else:
+                message = message + "data error: no valid columns for operation"
+
+            ds_fail = True
+
+            any_error = True
+            config_out_payload = []
 
         #print(params_dict)
 
