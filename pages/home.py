@@ -35,9 +35,6 @@ dash.register_page(__name__, path='/',name = os.getenv("APPNAME")) #
 
 cache = diskcache.Cache("./cache")
 
-
-
-
 #this should be an .env variable
 GCP_PROJ="ggn-nmfs-afscftnirs-dev-97fc"
 
