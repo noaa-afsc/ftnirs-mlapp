@@ -8,9 +8,10 @@ import ast
 import dash
 import dash_daq as daq
 import plotly.graph_objects as go
-from dash import dcc,html,State, dash_table,callback_context, callback
+#from dash.dependencies import Input, Output
+from dash import dcc,html, dash_table,callback_context, callback,  Output, Input, State, DiskcacheManager #,State
+#from dash_extensions.enrich import Output, Input, State, DiskCacheManager #not sure if I need this yet. Maybe, these (diskcache) got rolled into vanilla diskcache?
 import dash_bootstrap_components as dbc
-from dash.dependencies import Input, Output
 from dash.exceptions import PreventUpdate
 import pandas as pd
 import random as rand
@@ -20,11 +21,22 @@ import time
 import base64
 import h5py
 import app_data
+import diskcache
+#safer and less bespoke than what I previously implemented.
+import uuid
 from dotenv import load_dotenv
 
 load_dotenv('./tmp/.env')
 
 dash.register_page(__name__, path='/',name = os.getenv("APPNAME")) #
+
+#declare diskcache, to manage global variables/long running jobs in a way that
+#is multiple user and thread safe and fault tolerant.
+
+cache = diskcache.Cache("./cache")
+
+
+
 
 #this should be an .env variable
 GCP_PROJ="ggn-nmfs-afscftnirs-dev-97fc"
@@ -243,7 +255,6 @@ def update_approach_checklist(mode,pretrain_dict,pretrain_val):
 )
 def present_approach_metadata(approach,mode):
 
-
     hidden_metadata_keys = set({"finetunable"})
 
     if mode != "Inference" and approach != None:
@@ -296,6 +307,7 @@ def present_pretrained_metadata(pretrained_model_metadata_dict,mode,pretrained):
 
 def present_columns(data_dict,model_dict,datasets,mode,pretrained_val,approach_val,previous_selections): #(datasets,models,data_dict,model_dict):
 
+    print(previous_selections['oc'])
     #what do we need to know for columns for model run?
     #training:
     #1. what standard columns and other columns are being used (and their order)
@@ -351,7 +363,7 @@ def present_columns(data_dict,model_dict,datasets,mode,pretrained_val,approach_v
             del standard_cols_counter[i]
 
     wavs_exclude = False
-    if pretrained_val != None
+    if pretrained_val != None:
         if mode == "Inference":
             if 'column_names' in model_dict[pretrained_val]:
                 pretrained_include = [i for i in model_dict[pretrained_val]['column_names']] #pipe in split to this, if specified in to be created and linked training parameters
@@ -371,8 +383,8 @@ def present_columns(data_dict,model_dict,datasets,mode,pretrained_val,approach_v
                     other_excluded.append((str(i),f'{i} ({other_cols_counter[i]}/{ds_count}) (not used in pretrained model)'))
                     del other_cols_counter[i]
         elif mode == "Fine-tuning":
-
-            #TODO: for already existing columns, mandate/suggest their inclusion. 
+            pass
+            #TODO: for already existing columns, mandate/suggest their inclusion.
 
             #print(standard_excluded)
 
@@ -390,6 +402,8 @@ def present_columns(data_dict,model_dict,datasets,mode,pretrained_val,approach_v
     std_val = [m for m in [x[0] for x in standard_cols_counts_display] if m in previous_selections['std']]
     oc_opts = [{"value":x[0],"label":x[1],"disabled":False} for x in other_cols_counts_display]+[{"value":x[0],"label":x[1],"disabled":True} for x in other_excluded]
     oc_val = previous_selections['oc']
+
+    print(previous_selections['oc'])
 
 
     test = [html.Div(children=[html.H4("Wave numbers:"),dcc.Checklist(id='data-pane-wav-numbers',
@@ -643,12 +657,9 @@ def update_oc_col(oc,oc_opts,prev):
     #add if selected
     for i in oc:
         if i not in prev['oc']:
-            prev['oc'].add(i)
+            prev['oc'].append(i)
 
     return prev
-
-
-
 
 #function to recursively unpack the params_holder object to be able to get at nested parameters..
 def unpack_children_for_values(out_dict,children):
