@@ -158,7 +158,7 @@ layout = html.Div(id='parent', children=[
                                      options=["Training", "Inference", "Fine-tuning"],style={'width': 200}), #
                         html.Div(id='mode-select-output', style={'textAlign': 'left'}),
                         html.Div(id = "approaches-holder"),
-                        html.Div(id = "pretrained-holder")], style={'vertical-align': 'top', 'textAlign': 'center','maxHeight': 300,"overflowY":'auto','width':left_body_width})])
+                        html.Div(id = "pretrained-holder")], style={'vertical-align': 'top', 'textAlign': 'center','height': 350,'maxHeight': 350,"overflowY":'auto','width':left_body_width})])
                 ],style={"display": "inline-block",'marginRight': horizontal_pane_margin,'height': top_row_max_height, 'width': left_col_width}),
 
         html.Div(
@@ -247,18 +247,37 @@ html.Div(id="pretrained-present", style={'textAlign': 'left'}),
 )
 def update_approach_checklist(mode,pretrain_dict,pretrain_val,approach_val):
 
+    print('in update_approach_checklist')
+
     pretrain_val = pretrain_val["value"]
 
+    print('dict')
+    print(pretrain_dict)
+    print('val')
+    print(pretrain_val)
+
+    opts = app_data.TRAINING_APPROACHES
+
     if mode != "Inference":
-        opts = app_data.TRAINING_APPROACHES
+
         if mode == "Fine-tuning":
+
+            print('fine tune opts')
+            opts = {key: val for (key, val) in opts.items() if opts[key]['finetunable']}
+
+            print(opts)
+
+            #may change this flow depending on whether we include training approaches in model metadata or not
             if pretrain_dict != {}:
                 #if/when we add this, make sure we are correctly converting compat_opts value to list
-                if 'compatible_approaches' in pretrain_dict[pretrain_val]:
-                    compat_opts = pretrain_dict[pretrain_val]['compatible_approaches']
-                    opts = {key:val for (key,val) in opts.items() if key in compat_opts}
+                if pretrain_val != None:
+                    if 'compatible_approaches' in pretrain_dict[pretrain_val]:
+                        compat_opts = pretrain_dict[pretrain_val]['compatible_approaches']
+
+                        opts = {key:val for (key,val) in opts.items() if key in compat_opts}
+
             #print(opts)
-            opts = {key:val for (key,val) in opts.items() if opts[key]['finetunable']}
+
 
         return [html.H4("Training Approaches:", style={'textAlign': "left"}),
             dcc.Dropdown(id='approaches-select', style={'width': 200}, options=[i for i in opts],value=approach_val["value"] if approach_val["value"] in opts else None), #[] if approach_val["value"]==None else approach_val["value"]
@@ -293,8 +312,6 @@ def present_approach_metadata(approach,mode):
     State("pretrained_value_dict", "data")
 )
 def present_pretrained_metadata(pretrained_model_metadata_dict,mode,pretrained):
-
-    print("in present_pretrained_metadata")
 
     pretrained = pretrained['value']
 
@@ -335,9 +352,6 @@ def present_columns(data_dict,model_dict,datasets,mode,pretrained_val,approach_v
     #fine tuning:
     #1 and #2 from above
 
-    #print(datasets)
-    #print(data_dict)
-    #print(model_dict)
 
     #flatten lists and count instances of each item. Display this info along with column.
     #add titles for each section.
@@ -354,7 +368,6 @@ def present_columns(data_dict,model_dict,datasets,mode,pretrained_val,approach_v
 
     wave_counts = []
     valid_waves= 0
-    #print(data_dict)
     for i in datasets:
         if data_dict[i]['wave_number_end_index']!="['-1']":
             #print(data_dict[i]['wave_number_end_index'])
@@ -446,11 +459,6 @@ def present_columns(data_dict,model_dict,datasets,mode,pretrained_val,approach_v
     prevent_initial_call=True
 )
 def update_pretrained_metadata_dict(known_pretrained,selected_pretrained,pretrained_model_metadata_dict):
-
-    print("in here"
-    )
-
-    print(selected_pretrained)
 
     if selected_pretrained == None:
         return pretrained_model_metadata_dict
@@ -615,8 +623,6 @@ def update_wav_nums(wav,prev):
     prev['wav'] = wav
     #prev['wav']= set(wav)
 
-    print(prev)
-
     return prev
 
 @callback(Output("columns_dict",'data', allow_duplicate=True),
@@ -736,15 +742,11 @@ def model_run_event(n_clicks,mode,pretrained_model,approach,columns,datasets,par
     pretrained_model = pretrained_model['value']
     approach = approach['value']
 
-    print(pretrained_model)
-    print(approach)
     #loop through and look for "values". if exists options, use values to determine true or false.
     #Use id as the parameter name, make sure that convention is kept in get_params
 
     #this object enables us to use the 'selected' and 'extra' (for wavs, (%valid,%equivalent) and for others % present in total ds) and assess whether it is fine, warning, or error
     data_pane_vals_dict = unpack_data_pane_values_extra({}, columns)
-
-    print(data_pane_vals_dict)
 
     if n_clicks is not None:
 
