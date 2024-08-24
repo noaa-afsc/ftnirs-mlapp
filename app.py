@@ -1,4 +1,4 @@
-import dash
+from dash import Dash
 import dash_bootstrap_components as dbc
 import os
 from dotenv import load_dotenv
@@ -10,7 +10,7 @@ if os.getenv("HOSTIP") == None and os.getenv("APPPORT") == None:
     # code.interact(local=dict(globals(), **locals()))
     load_dotenv('./tmp/.env')
 
-app = dash.Dash(__name__, requests_pathname_prefix=f"/{os.getenv('APPNAME')}/", routes_pathname_prefix=f"/{os.getenv('APPNAME')}/",
+app = Dash(__name__, requests_pathname_prefix=f"/{os.getenv('APPNAME')}/", routes_pathname_prefix=f"/{os.getenv('APPNAME')}/",
                     external_stylesheets=external_stylesheets,
                     use_pages=True)
 

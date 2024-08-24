@@ -25,6 +25,7 @@ import diskcache
 #safer and less bespoke than what I previously implemented.
 import uuid
 from dotenv import load_dotenv
+from app_constant import app_header,header_height
 
 load_dotenv('./tmp/.env')
 
@@ -68,7 +69,7 @@ left_body_width ="95%"
 BUTTON_DEFAULT_STYLE = {"font-weight": 900,"width":100,"height":100}
 
 layout = html.Div(id='parent', children=[
-
+    app_header,
     html.Div(
         [
             dbc.Alert(
@@ -125,7 +126,7 @@ layout = html.Div(id='parent', children=[
                 is_open=False,
                 color="danger",
                 duration=4000)
-        ]),
+        ],style={"position":"fixed","top":header_height+10,"zIndex":999,'width':"100%"}),
     html.Div(id = 'toprow',children=[
         dcc.Store(id='params_dict', storage_type='memory',data = {}),
         dcc.Store(id='dataset_titles', storage_type='memory',data = {}),
@@ -174,7 +175,7 @@ layout = html.Div(id='parent', children=[
                     style={'textAlign': 'center','marginBelow':H2_height_below_padding, 'height':H2_height}), #,'marginTop': 20
                 html.Div(id = "params-holder"),
             ],style ={"display": "inline-block",'vertical-align': 'top','textAlign': 'left','width':right_col_width}),
-        ],style={'height':top_row_max_height}),html.Hr(), #style={'marginBottom': 60}
+        ],style={'height':top_row_max_height,"paddingTop":header_height}),html.Hr(), #style={'marginBottom': 60}
     html.Div(id='middle_row',children=[
 
         html.Div(
