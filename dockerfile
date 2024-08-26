@@ -1,7 +1,6 @@
 FROM python:3.11.0
 
-ENV WEBAPP_RELEASE $(git describe --tags $(git rev-list --tag
-s --max-count=1))
+ENV WEBAPP_RELEASE $(git describe --tags $(git rev-list --tags --max-count=1))
 
 WORKDIR /tmp
 
