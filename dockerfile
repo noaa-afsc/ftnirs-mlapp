@@ -9,10 +9,10 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir --upgrade -r requirements.txt
 
 COPY . . 
-ARG GIT_TAG
-RUN GIT_TAG=$(git describe --tags $(git rev-list --tags --max-count=1))
+ARG WEBAPP_RELEASE
+RUN WEBAPP_RELEASE=$(git describe --tags $(git rev-list --tags --max-count=1))
 
-ENV GIT_TAG $GIT_TAG
+ENV WEBAPP_RELEASE $WEBAPP_RELEASE
 
 WORKDIR /tmp/app
 
