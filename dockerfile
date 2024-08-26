@@ -19,4 +19,4 @@ COPY . .
 
 WORKDIR /tmp/app
 
-CMD sh -c 'WEBAPP_RELEASE=$(git describe --tags $(git rev-list --tags --max-count=1)) && echo $WEBAPP_RELEASE && python app.py'
+CMD bash -c 'WEBAPP_RELEASE=$(git describe --tags $(git rev-list --tags --max-count=1)) && python app.py'
