@@ -23,7 +23,7 @@ app_header = html.Div([
                      href=f"/{os.getenv('APPNAME')}/",style={"display": "inline-block","margin":0}),
                 dcc.Link(html.Img(src="/static/question-sign.png",style={"width":"20px","marginRight":10}),
                         href=f"/{os.getenv('APPNAME')}/help",style={"display": "inline-block"}),
-                html.Div("Current running jobs:", style={"display": "inline-block", 'textAlign': 'right'}),
+                html.Div("Number current running jobs:", style={"display": "inline-block", 'textAlign': 'right'}),
                 # "float": "right"
                 html.Div(id="active-jobs-holder", style={"display": "inline-block"}),
                 # make the job run fxn increment a global var for this

@@ -4,5 +4,5 @@ GCP_PROJ="ggn-nmfs-afscftnirs-dev-97fc"
 DATA_BUCKET="mlapp_data_bucket"
 TMP_BUCKET="mlapp_tmp_bucket"
 APPNAME = "mytestapp"
-WEBAPP_RELEASE = 0.0.1
+MLCODE_BRANCH = dan-dev
 MLCODE_RELEASE = 0.0.1

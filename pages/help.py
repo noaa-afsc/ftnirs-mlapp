@@ -13,7 +13,7 @@ layout = html.Div([
     app_header,
     html.Div(id="body",children=[
     html.H1('This is our Help page'),
-    html.Div('This is our help page content.')],style={"paddingTop":header_height})
+    html.Div('This is our help page content.')],style={"paddingTop":header_height+15})
 ])
 
 
