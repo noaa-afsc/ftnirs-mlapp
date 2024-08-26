@@ -10,12 +10,9 @@ COPY requirements.txt /tmp/requirements.txt
 
 RUN pip install --no-cache-dir --upgrade -r requirements.txt
 
-WORKDIR /
+COPY app.py /tmp/app.py
 
-#COPY app.py /tmp/app.py
-
-#COPY pages /tmp/pages/
-
+COPY pages /tmp/pages/
 #WORKDIR /tmp
 
 CMD ["python","app.py"]
