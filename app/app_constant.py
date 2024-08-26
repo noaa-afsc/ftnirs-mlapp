@@ -21,7 +21,7 @@ app_header = html.Div([
         #html.Div(id="secondline", children = [
                 dcc.Link(html.Img(src="/static/home.png",style={"width":"20px","marginLeft":10,"marginRight":10}),
                      href=f"/{os.getenv('APPNAME')}/",style={"display": "inline-block","margin":0}),
-                dcc.Link(html.Img(src="/static/question-sign.png",style={"width":"20px","marginRight":10}),
+                dcc.Link(html.Img(src="/static/ques7tion-sign.png",style={"width":"20px","marginRight":10}),
                         href=f"/{os.getenv('APPNAME')}/help",style={"display": "inline-block"}),
                 html.Div("Number current running jobs:", style={"display": "inline-block", 'textAlign': 'right'}),
                 # "float": "right"
