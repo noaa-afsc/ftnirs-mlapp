@@ -126,7 +126,7 @@ layout = html.Div(id='parent', children=[
                 is_open=False,
                 color="danger",
                 duration=4000)
-        ],style={"position":"fixed","top":header_height+10,"zIndex":999,'width':"100%"}),
+        ],style={"position":"fixed","top":header_height+15,"zIndex":999,'width':"100%"}),
     html.Div(id = 'toprow',children=[
         dcc.Store(id='params_dict', storage_type='memory',data = {}),
         dcc.Store(id='dataset_titles', storage_type='memory',data = {}),
