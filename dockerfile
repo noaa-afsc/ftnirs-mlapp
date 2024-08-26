@@ -4,7 +4,7 @@ ENV WEBAPP_RELEASE $(git describe --tags $(git rev-list --tags --max-count=1))
 
 RUN pip install --upgrade pip
 
-WORKDIR /app
+WORKDIR /tmp
 
 COPY requirements.txt .
 
@@ -12,4 +12,4 @@ RUN pip install --no-cache-dir --upgrade -r requirements.txt
 
 COPY . . 
 
-CMD ["python","app.py"]
+CMD ["python","app/app.py"]
