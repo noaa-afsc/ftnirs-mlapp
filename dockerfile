@@ -8,7 +8,8 @@ COPY requirements.txt /tmp/requirements.txt
 
 RUN pip install --no-cache-dir --upgrade -r requirements.txt
 
-#COPY .env /tmp/.env
+ENV WEBAPP_RELEASE $(git describe --tags $(git rev-list --tag
+s --max-count=1))
 
 COPY app.py /tmp/app.py
 
