@@ -19,4 +19,4 @@ COPY . .
 
 WORKDIR /tmp/app
 
-ENTRYPOINT ["sh","c","WEBAPP_RELEASE=$(git describe --tags $(git rev-list --tags --max-count=1)) && python app.py"]
+ENTRYPOINT ["sh","-c","WEBAPP_RELEASE=$(git describe --tags $(git rev-list --tags --max-count=1)) && python app.py"]
