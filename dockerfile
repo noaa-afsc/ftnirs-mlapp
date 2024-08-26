@@ -12,6 +12,8 @@ RUN pip install --no-cache-dir --upgrade -r requirements.txt
 
 COPY app.py /tmp/app.py
 
+COPY pages /tmp/pages/
+
 WORKDIR /tmp
 
 CMD ["python","app.py"]
