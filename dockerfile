@@ -19,4 +19,4 @@ COPY . .
 
 WORKDIR /tmp/app
 
-CMD ["WEBAPP_RELEASE=$(git describe --tags $(git rev-list --tags --max-count=1)) && python app.py"]
+CMD ["sh","-c","WEBAPP_RELEASE=$(git describe --tags $(git rev-list --tags --max-count=1)) && python app.py"]
