@@ -1,5 +1,7 @@
 FROM python:3.11.0
 
+RUN apt-get install -y git
+
 RUN pip install --upgrade pip
 
 WORKDIR /tmp
@@ -19,4 +21,6 @@ COPY . .
 
 WORKDIR /tmp/app
 
-ENTRYPOINT ["sh","-c","WEBAPP_RELEASE=$(git describe --tags $(git rev-list --tags --max-count=1)) && python app.py"]
+ENV WEBAPP_RELEASE=$(git describe --tags $(git rev-list --tags --max-count=1))
+
+CMD ["python","app.py"]
