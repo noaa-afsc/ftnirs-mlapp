@@ -1,10 +1,20 @@
-from dash import html,dcc,Input,Output
+from dash import html,dcc
 import os
+import base64
 
 first_row_height = 10
 second_row_height = 15
 second_row_padding = 5
 header_height = second_row_height + second_row_padding + first_row_height
+
+#encode image as bytes, from the python context (app context seems unreliable or at least hard to predict between dev/prod)
+
+def encode_image(path):
+    with open(path,"rb") as image_file:
+        encoded_image = base64.b64encode(image_file.read()).decode('utf-8')
+        return f"data:image/png;base64,{encoded_image}"
+
+
 #used in all pages
 app_header = html.Div([
         dcc.Interval(
@@ -19,9 +29,9 @@ app_header = html.Div([
             #and then remove on stop
 
         #html.Div(id="secondline", children = [
-                dcc.Link(html.Img(src="../static/home.png",style={"width":"20px","marginLeft":10,"marginRight":10}),
+                dcc.Link(html.Img(src=encode_image("./static/home.png"),style={"width":"20px","marginLeft":10,"marginRight":10}),
                      href=f"/{os.getenv('APPNAME')}/",style={"display": "inline-block","margin":0}),
-                dcc.Link(html.Img(src="../static/question-sign.png",style={"width":"20px","marginRight":10}),
+                dcc.Link(html.Img(src=encode_image("./static/question-sign.png"),style={"width":"20px","marginRight":10}),
                         href=f"/{os.getenv('APPNAME')}/help",style={"display": "inline-block"}),
                 html.Div("Number current running jobs:", style={"display": "inline-block", 'textAlign': 'right'}),
                 # "float": "right"
@@ -31,12 +41,12 @@ app_header = html.Div([
                     html.Div(f"Web tool Github release version: {os.getenv('WEBAPP_RELEASE')}",
                              style={"display": "inline-block", 'textAlign': 'right'}),
                     html.A(
-                        html.Img(src="../static/github-sign.png", style={"width": "20px", "marginLeft": 10, "marginRight": 10}),
+                        html.Img(src=encode_image("./static/github-sign.png"), style={"width": "20px", "marginLeft": 10, "marginRight": 10}),
                         href="https://github.com/DanWoodrichNOAA/ftnirs-mlapp/tree/ml-dev", style={"display": "inline-block", "marginRight": 15}, target="_blank"),
                     html.Div(f"ML-codebase Github release version: {os.getenv('MLCODE_RELEASE')}",
                              style={"display": "inline-block", 'textAlign': 'right'}),
                     html.A(
-                        html.Img(src="../static/github-sign.png", style={"width": "20px", "marginLeft": 10, "marginRight": 10}),
+                        html.Img(src=encode_image("./static/github-sign.png"), style={"width": "20px", "marginLeft": 10, "marginRight": 10}),
                         href="https://github.com/michael-zakariaie-noaa/ftnirs-ml-codebase/tree/dan-dev", style={"display": "inline-block", "margin": 0}, target="_blank")
                 ],style={"float": "right"})],style={"height": first_row_height,"display": "inline-block","width":"100%","backgroundColor":"white"})],
             #    ],style={"float":"right"})],
