@@ -10,9 +10,9 @@ RUN pip install --no-cache-dir --upgrade -r requirements.txt
 
 COPY . . 
 
-RUN mkdir -p /.tmp
+RUN mkdir -p /tmp
 
-RUN WEBAPP_RELEASE=$(git describe --tags $(git rev-list --tags --max-count=1)) && echo "WEBAPP_RELEASE=${WEBAPP_RELEASE}" > ./tmp/.dynenv
+RUN WEBAPP_RELEASE=$(git describe --tags $(git rev-list --tags --max-count=1)) && echo "WEBAPP_RELEASE=${WEBAPP_RELEASE}" > /tmp/.dynenv
 
 WORKDIR /tmp/app
 
