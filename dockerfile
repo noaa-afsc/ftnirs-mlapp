@@ -1,7 +1,5 @@
 FROM python:3.11.0
 
-RUN apt-get install -y git
-
 RUN pip install --upgrade pip
 
 WORKDIR /tmp
@@ -12,15 +10,10 @@ RUN pip install --no-cache-dir --upgrade -r requirements.txt
 
 COPY . . 
 
-#WORKDIR /tmp
+RUN mkdir -p /.tmp
 
-#ARG WEBAPP_RELEASE
-#RUN WEBAPP_RELEASE=$(git describe --tags $(git rev-list --tags #--max-count=1))
-
-#ENV WEBAPP_RELEASE=$WEBAPP_RELEASE
+RUN WEBAPP_RELEASE=$(git describe --tags $(git rev-list --tags --max-count=1)) && echo "WEBAPP_RELEASE=${WEBAPP_RELEASE}" > ./tmp/.dynenv
 
 WORKDIR /tmp/app
-
-ENV WEBAPP_RELEASE=$(git describe --tags $(git rev-list --tags --max-count=1))
 
 CMD ["python","app.py"]

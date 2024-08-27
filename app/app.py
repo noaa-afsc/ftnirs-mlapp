@@ -5,10 +5,13 @@ from dotenv import load_dotenv
 
 external_stylesheets = [dbc.themes.BOOTSTRAP,'https://codepen.io/chriddyp/pen/bWLwgP.css']
 
-if os.getenv("HOSTIP") == None and os.getenv("APPPORT") == None:
-    print("using app ip and port defaults")
-    # code.interact(local=dict(globals(), **locals()))
+#check for any env files. Local uses ./tmp/.env, and cloud build uses both docker env (static) and ./tmp
+
+if os.path.isfile('./tmp/.env'):
     load_dotenv('./tmp/.env')
+
+if os.path.isfile('./tmp/.dynenv'):
+    load_dotenv('./tmp/.dynenv')
 
 app = Dash(__name__, requests_pathname_prefix=f"/{os.getenv('APPNAME')}/", routes_pathname_prefix=f"/{os.getenv('APPNAME')}/",
                     external_stylesheets=external_stylesheets,
