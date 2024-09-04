@@ -1116,10 +1116,6 @@ def data_check_datasets(file,load_data = True):
         # the identifer field, no matter what it is called, will be replaced by id. Have an visual indicator
         # for columns that cannot be matched to global naming.
 
-        # what I could do here- have a google sheet that matches global names to variable type, as well
-        # as known aliases. This can be referenced here, as well as for model behaviors like one-hot expansion
-        # of categorical variables.
-
         # for now, let's just hardcode a dict. have it as a seperate file, 'standard_variables.py'
 
         if 'metadata' in columns:
@@ -1161,35 +1157,16 @@ def data_check_datasets(file,load_data = True):
         # classify provided columns into standard and other columns:
 
         standard_cols = []
-        standard_cols_aliases = []
         other_cols = []
 
         for f in non_wave_columns:
             if f in app_data.STANDARD_COLUMN_NAMES:
-                if f not in standard_cols:
-                    standard_cols.append(f)
-                    standard_cols_aliases.append(f)
-                else:
-                    valid = False
-                    message = message + "; - " + f"multiple columns refer to the same internal id: {f}"
+                standard_cols.append(f)
             else:
-                # match = [f in x[0] for x in [(standard_variable_names.DICT[p]['aliases'],p) for p in standard_variable_names.DICT]]
-                match = [p for p in app_data.STANDARD_COLUMN_NAMES if f in app_data.STANDARD_COLUMN_NAMES[p]['aliases']]
-                if len(match) > 1:
-                    valid = False
-                    message = message + "; - " + f"column name {f} matched aliases for multiple standard names: issues is a duplicate alias in standard names dictionary, remedy there."
-                elif len(match) > 0:
-                    if match[0] not in standard_cols:
-                        standard_cols.append(match[0])
-                        standard_cols_aliases.append(f)
-                    else:
-                        valid = False
-                        message = message + "; - " + f"multiple columns refer to the same internal id: {match[0]}"
-                else:
-                    other_cols.append(f)
+                other_cols.append(f)
 
         # If wav numbers are absent in dataset, supply relevant metadata fields with -1
-        metadata = {"standard_columns": standard_cols, "standard_column_aliases": standard_cols_aliases,
+        metadata = {"standard_columns": standard_cols,
                     "other_columns": other_cols, "wave_number_start_index": [wave_number_start_index],
                     "wave_number_end_index": [wave_number_end_index], "wave_number_min": [wave_number_min],
                     "wave_number_max": [wave_number_max], "wave_number_step": [wave_number_step]}

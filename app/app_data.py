@@ -10,19 +10,19 @@
 
 wn_string_name = 'wn**'
 
-STANDARD_COLUMN_NAMES = {'id':{'data_type':'unq_text','aliases':['File_name','file_name']},
-        'split':{'data_type':'int','aliases':['Sample','sample']},
-        'catch_time':{'data_type':'int','aliases':[]},
-        'sex':{'data_type':'categorical','aliases':[]},
-        'age':{'data_type':'numeric','aliases':['Final_age','final_age']},
-        'latitude':{'data_type':'numeric','aliases':['Latitude']},
-        'longitude':{'data_type':'numeric','aliases':['Longitude']},
-        'region': {'data_type': 'categorical', 'aliases': ['Region']},
-        'fish_length': {'data_type': 'numeric', 'aliases': ['Length','length']},
-        'fish_weight': {'data_type': 'numeric', 'aliases': ['weight']},
-        'otolith_weight': {'data_type': 'categorical', 'aliases': ['Otolith weight']},
-        'gear_depth': {'data_type': 'numeric', 'aliases': ['Gear_depth']},
-        'gear_temp': {'data_type': 'numeric', 'aliases': ['Gear_temp']},
+STANDARD_COLUMN_NAMES = {'id':{'data_type':'unq_text'},
+        'split':{'data_type':'int'},
+        'catch_time':{'data_type':'int'},
+        'sex':{'data_type':'categorical'},
+        'age':{'data_type':'numeric'},
+        'latitude':{'data_type':'numeric'},
+        'longitude':{'data_type':'numeric'},
+        'region': {'data_type': 'categorical'},
+        'fish_length': {'data_type': 'numeric'},
+        'fish_weight': {'data_type': 'numeric'},
+        'otolith_weight': {'data_type': 'categorical'},
+        'gear_depth': {'data_type': 'numeric'},
+        'gear_temp': {'data_type': 'numeric'}
         }
 
 #currently, just hardcoding parameters as doing this dynamically seems anti-pattern with the framework, and
