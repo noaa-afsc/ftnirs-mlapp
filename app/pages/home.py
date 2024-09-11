@@ -131,7 +131,7 @@ layout = html.Div(id='parent', children=[
         dcc.Store(id='params_dict', storage_type='memory',data = {}),
         dcc.Store(id='dataset_titles', storage_type='memory',data = {}),
         dcc.Store(id='data_metadata_dict', storage_type='memory',data = {}),
-        dcc.Store(id='columns_dict', storage_type='memory', data={"wav":[app_data.wn_string_name],'std':[i for i in app_data.STANDARD_COLUMN_NAMES],'oc':[]}),
+        dcc.Store(id='columns_dict', storage_type='memory', data={"wav":[app_data.WN_STRING_NAME],'std':[i for i in app_data.STANDARD_COLUMN_NAMES],'oc':[]}),
         #dcc.Store(id='columns_dict', storage_type='memory', data={"wav":{app_data.wn_string_name},'std':{i for i in app_data.STANDARD_COLUMN_NAMES},'oc':set()}), #more effecient but doesn't work with framework
         dcc.Store(id='pretrained_model_metadata_dict', storage_type='memory', data={}),
         dcc.Store(id='pretrained_value_dict', storage_type='memory', data={'value':None}),
@@ -380,19 +380,17 @@ def present_columns(data_dict,model_dict,datasets,mode,pretrained_val,approach_v
     wave_counts = set(wave_counts)
 
     #for training and inference, do not allow training for partial presence of wav numbers
-    wav_str = f"{app_data.wn_string_name} valid: {valid_waves}/{ds_count}, equivalent: {len(wave_counts)}/{ds_count}"
+    wav_str = f"{app_data.WN_STRING_NAME} valid: {valid_waves}/{ds_count}, equivalent: {len(wave_counts)}/{ds_count}"
 
     standard_cols_counter = Counter([i for sublist in [ast.literal_eval(data_dict[i]['standard_columns']) for i in datasets] for i in sublist])
     other_cols_counter = Counter([i for sublist in [ast.literal_eval(data_dict[i]['other_columns']) for i in datasets] for i in sublist])
 
-    non_bio_columns = ['id','split'] #pipe in split to this, if specified in to be created and linked training parameters
-    for i in non_bio_columns:
+    for i in app_data.NON_BIO_COLUMNS:
         if i in standard_cols_counter:
             standard_excluded.append((str(i),f'{i} ({standard_cols_counter[i]}/{ds_count}) (not a biological factor column)',standard_cols_counter[i]/ds_count))
             del standard_cols_counter[i]
 
-    response_columns = ['age'] #pipe in split to this, if specified in to be created and linked training parameters
-    for i in response_columns:
+    for i in app_data.RESPONSE_COLUMNS:
         if i in standard_cols_counter:
             standard_excluded.append((str(i),f'{i} ({standard_cols_counter[i]}/{ds_count}) (response column)',standard_cols_counter[i]/ds_count))
             del standard_cols_counter[i]
@@ -403,7 +401,7 @@ def present_columns(data_dict,model_dict,datasets,mode,pretrained_val,approach_v
             if 'column_names' in model_dict[pretrained_val]:
                 pretrained_include = [i for i in model_dict[pretrained_val]['column_names']] #pipe in split to this, if specified in to be created and linked training parameters
                 #exclude wavs
-                if app_data.wn_string_name not in pretrained_include:
+                if app_data.WN_STRING_NAME not in pretrained_include:
                     wavs_exclude = True
                     wav_str = wav_str + " (not used in pretrained model)"
                 #exclude standard
@@ -427,7 +425,7 @@ def present_columns(data_dict,model_dict,datasets,mode,pretrained_val,approach_v
     standard_cols_counts_display = [(str(x[0]),f"{x[0]} ({x[1]}/{ds_count})",x[1]/ds_count) for x in sorted(standard_cols_counter.items(), key = lambda x: x[1], reverse = True)]
     other_cols_counts_display = [(str(x[0]),f"{x[0]} ({x[1]}/{ds_count})",x[1]/ds_count) for x in sorted(other_cols_counter.items(), key = lambda x: x[1], reverse = True)]
 
-    wav_opts = [{"value":app_data.wn_string_name, "label":wav_str,"disabled":True if (valid_waves != ds_count or wavs_exclude) else False,
+    wav_opts = [{"value":app_data.WN_STRING_NAME, "label":wav_str,"disabled":True if (valid_waves != ds_count or wavs_exclude) else False,
                  'extra':(valid_waves/ds_count,len(wave_counts)/ds_count)}]
 
     #consolidate all values, and apply previous selections (as relevant)
@@ -555,7 +553,7 @@ def update_data_metadata_dict(known_datasets,selected_datasets,data_metadata_dic
     State('dataset_titles', 'data'),
     State('params_dict', 'data')
 )
-def download_results(n_clicks,run_name,run_id,dataset_titles,params_dict):
+def download_results(n_clicks,run_name,mode,run_id,dataset_titles,params_dict):
 
     if n_clicks is not None:
 
@@ -1022,7 +1020,7 @@ def datasets_to_gcp(filename,contents,data_metadata_dict):
 @callback(
     Output("model-upload-from-session-success", "is_open"),
     Output("model-upload-from-session-failure", "is_open"),
-    Input('btn-upload-model', 'n_clicks'),
+    Input('btn-upload-pretrained', 'n_clicks'),
     State('run-name',"value"),
     State('description', "value"),
     State("run_id","data")
