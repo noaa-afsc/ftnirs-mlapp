@@ -368,6 +368,7 @@ def present_columns(data_dict,model_dict,datasets,mode,pretrained_val,approach_v
     ds_count = len(datasets)
 
     wave_counts = []
+    #valid waves: increments for every dataset that has valid waves (not = -1, signaling not present).
     valid_waves= 0
     for i in datasets:
         if data_dict[i]['wave_number_end_index']!="['-1']":
@@ -377,10 +378,19 @@ def present_columns(data_dict,model_dict,datasets,mode,pretrained_val,approach_v
                                f"{round(float(ast.literal_eval(data_dict[i]['wave_number_step'])[0]),2)}")
             valid_waves = valid_waves + 1
 
+    print('wave_counts 1')
+    print(wave_counts)
     wave_counts = set(wave_counts)
 
+    print('wave_counts set')
+    print(wave_counts)
+
+    #equivalent: how many ds have the same exact same wave_counts.
+
     #for training and inference, do not allow training for partial presence of wav numbers
-    wav_str = f"{app_data.WN_STRING_NAME} valid: {valid_waves}/{ds_count}, equivalent: {len(wave_counts)}/{ds_count}"
+    #equivalent = f"{(ds_count-len(wave_counts)+1)}/{ds_count}" if ds_count==0 else "NA"
+
+    wav_str = f"{app_data.WN_STRING_NAME} valid: {valid_waves}/{ds_count}, equivalent: {(ds_count-len(wave_counts)+1)}/{ds_count}"
 
     standard_cols_counter = Counter([i for sublist in [ast.literal_eval(data_dict[i]['standard_columns']) for i in datasets] for i in sublist])
     other_cols_counter = Counter([i for sublist in [ast.literal_eval(data_dict[i]['other_columns']) for i in datasets] for i in sublist])
@@ -426,7 +436,7 @@ def present_columns(data_dict,model_dict,datasets,mode,pretrained_val,approach_v
     other_cols_counts_display = [(str(x[0]),f"{x[0]} ({x[1]}/{ds_count})",x[1]/ds_count) for x in sorted(other_cols_counter.items(), key = lambda x: x[1], reverse = True)]
 
     wav_opts = [{"value":app_data.WN_STRING_NAME, "label":wav_str,"disabled":True if (valid_waves != ds_count or wavs_exclude) else False,
-                 'extra':(valid_waves/ds_count,len(wave_counts)/ds_count)}]
+                 'extra':(valid_waves/ds_count,ds_count-len(wave_counts)+1/ds_count)}]
 
     #consolidate all values, and apply previous selections (as relevant)
 
