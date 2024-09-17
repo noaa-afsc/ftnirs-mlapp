@@ -69,6 +69,9 @@ left_body_width ="95%"
 BUTTON_DEFAULT_STYLE = {"font-weight": 900,"width":100,"height":100}
 refresh_button_width = 40
 
+#this will be supplied in callbacks to make the loading icon show up on button click
+ds_ref_content = [html.Img(src=encode_image("./static/refresh-arrow.png"),style={"width":"20px","height":'auto'})]
+
 layout = html.Div(id='parent', children=[
     app_header,
     html.Div(
@@ -148,8 +151,7 @@ layout = html.Div(id='parent', children=[
                     options=get_datasets(), # [9:]if f"datasets/" == i[:8]
                     value=[], style={'maxHeight':200,'overflowY':'auto','width':left_body_width},inputStyle={"margin-right":checklist_pixel_padding_between }),
                 html.Div(id='ds-buttons',children=[
-                    html.Div([html.Button(id='refresh-ds',children=html.Img(src=encode_image("./static/refresh-arrow.png"),
-                                                   style={"width":"20px","height":'auto'}),style={'width':refresh_button_width,"align-items":'center','padding':0})],style={"display": "inline-block"}), #,'margin': 0
+                    html.Div([html.Button(id='refresh-ds',children=[dcc.Loading(html.Div(id='ds_ref_content',children=ds_ref_content),type="circle")],style={'width':refresh_button_width,"align-items":'center','padding':0})],style={"display": "inline-block"}), #,'margin': 0
                     html.Div([dcc.Upload(
                         id='upload-ds',
                         children=html.Button('Upload Dataset(s)'),
@@ -535,6 +537,7 @@ def refresh_options(clicks):
 @callback(
     Output('data_metadata_dict',"data", allow_duplicate=True),
     Output('dataset_select_last_clicked', "data", allow_duplicate=True),
+    Output("ds_ref_content","children", allow_duplicate=True),
     Input('dataset-select','options'),
     Input('dataset-select','value'),
     State('dataset_select_last_clicked', 'data'),
@@ -593,7 +596,7 @@ def update_data_metadata_dict(known_datasets,selected_datasets,click_trigger,dat
     print("DMD:")
     print(data_metadata_dict)
 
-    return data_metadata_dict,False #,click_prev+1 if increment else click_prev
+    return data_metadata_dict,False,ds_ref_content
 
 
 @callback(
@@ -1028,6 +1031,7 @@ def attach_null_metadata(blob):
     Output("alert-dataset-fail", "children"),
     Output("upload-ds", "contents"), #this output is workaround for known dcc.Upload bug where duplicate uploads don't trigger change.
     Output("dataset-select","options"),
+    Output("ds_ref_content", "children", allow_duplicate=True),
     Output("dataset_select_last_clicked", "data"),
     Input('upload-ds', 'filename'),Input('upload-ds', 'contents'),
     State('data_metadata_dict','data'),
@@ -1064,9 +1068,9 @@ def datasets_to_gcp(filename,contents,data_metadata_dict):
             else:
                 valid = False
     else:
-        return data_metadata_dict,None,None,None,None,get_datasets(),False
+        return data_metadata_dict,None,None,None,None,get_datasets(),False,ds_ref_content
 
-    return data_metadata_dict,valid,not valid,message,None,get_datasets(),False
+    return data_metadata_dict,valid,not valid,message,None,get_datasets(),False,ds_ref_content
 
 #similar to the one below,
 
