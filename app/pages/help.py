@@ -21,3 +21,4 @@ layout = html.Div([
 # #<a href="https://www.flaticon.com/free-icons/home" title="home icons">Home icons created by Dave Gandy - Flaticon</a>
 #<a href="https://www.flaticon.com/free-icons/question" title="question icons">Question icons created by Dave Gandy - Flaticon</a>
 #<a href="https://www.flaticon.com/free-icons/github" title="github icons">Github icons created by Dave Gandy - Flaticon</a>
+#<a href="https://www.flaticon.com/free-icons/refresh" title="refresh icons">Refresh icons created by Dave Gandy - Flaticon</a>

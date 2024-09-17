@@ -25,7 +25,7 @@ import diskcache
 #safer and less bespoke than what I previously implemented.
 import uuid
 from dotenv import load_dotenv
-from app_constant import app_header,header_height
+from app_constant import app_header,header_height,encode_image
 
 load_dotenv('./tmp/.env')
 
@@ -67,6 +67,7 @@ H2_height_below_padding = 30
 checklist_pixel_padding_between = "5px"
 left_body_width ="95%"
 BUTTON_DEFAULT_STYLE = {"font-weight": 900,"width":100,"height":100}
+refresh_button_width = 40
 
 layout = html.Div(id='parent', children=[
     app_header,
@@ -136,7 +137,9 @@ layout = html.Div(id='parent', children=[
         dcc.Store(id='pretrained_model_metadata_dict', storage_type='memory', data={}),
         dcc.Store(id='pretrained_value_dict', storage_type='memory', data={'value':None}),
         dcc.Store(id='approaches_value_dict', storage_type='memory', data={'value': None}),
+        #dcc.Store(id='refresh-ds-count', storage_type='memory', data = 0),
         dcc.Store(id='run_id', storage_type='memory'),
+        dcc.Store(id='dataset_select_last_clicked', storage_type='memory',data = False),
             html.Div(id='left col top row',children=[
             html.Div(id='datasets',children=[
                 html.H2(id='H2_1', children='Select Datasets',
@@ -144,10 +147,14 @@ layout = html.Div(id='parent', children=[
                 dcc.Checklist(id='dataset-select',
                     options=get_datasets(), # [9:]if f"datasets/" == i[:8]
                     value=[], style={'maxHeight':200,'overflowY':'auto','width':left_body_width},inputStyle={"margin-right":checklist_pixel_padding_between }),
-                dcc.Upload(
-                    id='upload-ds',
-                    children=html.Button('Upload Dataset(s)'),
-                    multiple=True)
+                html.Div(id='ds-buttons',children=[
+                    html.Div([html.Button(id='refresh-ds',children=html.Img(src=encode_image("./static/refresh-arrow.png"),
+                                                   style={"width":"20px","height":'auto'}),style={'width':refresh_button_width,"align-items":'center','padding':0})],style={"display": "inline-block"}), #,'margin': 0
+                    html.Div([dcc.Upload(
+                        id='upload-ds',
+                        children=html.Button('Upload Dataset(s)'),
+                        multiple=True)],style={"display": "inline-block"})
+                ]),
             ],style={'vertical-align': 'top','textAlign': 'left'}), #'marginRight': 20 #"display": "inline-block",
 
             html.Div(id='modes and models',children=
@@ -435,6 +442,9 @@ def present_columns(data_dict,model_dict,datasets,mode,pretrained_val,approach_v
     standard_cols_counts_display = [(str(x[0]),f"{x[0]} ({x[1]}/{ds_count})",x[1]/ds_count) for x in sorted(standard_cols_counter.items(), key = lambda x: x[1], reverse = True)]
     other_cols_counts_display = [(str(x[0]),f"{x[0]} ({x[1]}/{ds_count})",x[1]/ds_count) for x in sorted(other_cols_counter.items(), key = lambda x: x[1], reverse = True)]
 
+    #import code
+    #code.interact(local=dict(globals(), **locals()))
+
     wav_opts = [{"value":app_data.WN_STRING_NAME, "label":wav_str,"disabled":True if (valid_waves != ds_count or wavs_exclude) else False,
                  'extra':(valid_waves/ds_count,ds_count-len(wave_counts)+1/ds_count)}]
 
@@ -508,21 +518,51 @@ def update_pretrained_metadata_dict(known_pretrained,selected_pretrained,pretrai
 
     return pretrained_model_metadata_dict
 
-#possibly, could be issue with this where a dataset/model is reuploaded. To address this,
-#could make sure to clear the item during upload process, or, disallow overwritting.
-#there is an edge cases where a dataset could be uploaded through another mechanism, and match an exising name.
-#however, this will be solved by a refresh which should seem like a logical first troubleshoot to the user
+#refresh
 @callback(
-    Output('data_metadata_dict',"data", allow_duplicate=True),
-    Input('dataset-select','options'),
-    Input('dataset-select','value'),
-    State('data_metadata_dict',"data"),
+    Output('dataset-select','options', allow_duplicate=True),
+    Output('dataset_select_last_clicked',"data", allow_duplicate=True),
+    #Output('dataset-select',"value"),
+    Input('refresh-ds', "n_clicks"),
     prevent_initial_call=True
 )
-def update_data_metadata_dict(known_datasets,selected_datasets,data_metadata_dict):
+def refresh_options(clicks):
 
-    kd_set = set(known_datasets)
-    dmd_set = set(data_metadata_dict)
+    return get_datasets(),True
+
+#change: input will be from dataset-select 'click trigger' to wipe behavior,
+#and use the button as an input to dataset select
+@callback(
+    Output('data_metadata_dict',"data", allow_duplicate=True),
+    Output('dataset_select_last_clicked', "data", allow_duplicate=True),
+    Input('dataset-select','options'),
+    Input('dataset-select','value'),
+    State('dataset_select_last_clicked', 'data'),
+    #Input('refresh-ds', "n_clicks"),
+    State('data_metadata_dict',"data"),
+    #State('refresh-ds-count', "data"),
+    prevent_initial_call=True
+)
+def update_data_metadata_dict(known_datasets,selected_datasets,click_trigger,data_metadata_dict):
+
+    print(click_trigger)
+
+    #if click_input == None:
+    #    click_input = 0
+    #print(click_input)
+    #print(click_prev)
+
+    #if refresh is hit, triggers special behavior where we flush known datasets
+    if click_trigger: #click_input> click_prev:
+        print('DS refresh button was clicked!')
+        kd_set = set(get_datasets())
+        dmd_set = set()
+        data_metadata_dict = {}
+        increment = True
+    else:
+        increment = False
+        kd_set = set(known_datasets)
+        dmd_set = set(data_metadata_dict)
 
     excess_metadata = dmd_set.difference(kd_set)
     if len(excess_metadata) > 0:
@@ -550,8 +590,10 @@ def update_data_metadata_dict(known_datasets,selected_datasets,data_metadata_dic
             #upload the flag to
             data_metadata_dict.update({k:metadata})
             attach_metadata_to_blob(metadata,blob)
+    print("DMD:")
+    print(data_metadata_dict)
 
-    return data_metadata_dict
+    return data_metadata_dict,False #,click_prev+1 if increment else click_prev
 
 
 @callback(
@@ -986,6 +1028,7 @@ def attach_null_metadata(blob):
     Output("alert-dataset-fail", "children"),
     Output("upload-ds", "contents"), #this output is workaround for known dcc.Upload bug where duplicate uploads don't trigger change.
     Output("dataset-select","options"),
+    Output("dataset_select_last_clicked", "data"),
     Input('upload-ds', 'filename'),Input('upload-ds', 'contents'),
     State('data_metadata_dict','data'),
     prevent_initial_call=True
@@ -1021,9 +1064,9 @@ def datasets_to_gcp(filename,contents,data_metadata_dict):
             else:
                 valid = False
     else:
-        return data_metadata_dict,None,None,None,None,get_datasets()
+        return data_metadata_dict,None,None,None,None,get_datasets(),False
 
-    return data_metadata_dict,valid,not valid,message,None,get_datasets()
+    return data_metadata_dict,valid,not valid,message,None,get_datasets(),False
 
 #similar to the one below,
 
@@ -1150,10 +1193,12 @@ def data_check_datasets(file,load_data = True):
             wave_number_step = (float(wave_number_max) - float(wave_number_min)) / (
                         wave_number_end_index - wave_number_start_index)
 
-            other_cols_start = 0  # assume this for now, but see if there are exeptions
-            other_cols_end = wave_number_start_index - 1
+            #not robust to wn being at start or end of df
+            #other_cols_start = 0  # assume this for now, but see if there are exeptions
+            #other_cols_end = wave_number_start_index - 1
+            #non_wave_columns = columns[other_cols_start:other_cols_end]
 
-            non_wave_columns = columns[other_cols_start:other_cols_end]
+            non_wave_columns = [i for i in columns if 'wn' not in i]
         else:
             non_wave_columns = columns
             wave_number_start_index = "-1"
@@ -1166,6 +1211,9 @@ def data_check_datasets(file,load_data = True):
 
         standard_cols = []
         other_cols = []
+
+        #import code
+        #code.interact(local=dict(globals(), **locals()))
 
         for f in non_wave_columns:
             if f in app_data.STANDARD_COLUMN_NAMES:
