@@ -14,6 +14,7 @@ WORKDIR /tmp/app
 
 RUN mkdir -p ./tmp
 
-RUN WEBAPP_RELEASE=$(git describe --tags $(git rev-list --tags --max-count=1)) && echo "WEBAPP_RELEASE=${WEBAPP_RELEASE}" > ./tmp/.dynenv
+#pull from latest commit in checkout branch
+RUN WEBAPP_RELEASE=$(git describe --tags $(git rev-list --tags --max-count=1 --first-parent)) && echo "WEBAPP_RELEASE=${WEBAPP_RELEASE}" > ./tmp/.dynenv
 
 CMD ["python","app.py"]

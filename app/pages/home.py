@@ -70,7 +70,7 @@ BUTTON_DEFAULT_STYLE = {"font-weight": 900,"width":100,"height":100}
 refresh_button_width = 40
 
 #this will be supplied in callbacks to make the loading icon show up on button click
-ds_ref_content = [html.Img(src=encode_image("./static/refresh-arrow.png"),style={"width":"20px","height":'auto'})]
+ref_content = [html.Img(src=encode_image("./static/refresh-arrow.png"),style={"width":"20px","height":'auto'})]
 
 layout = html.Div(id='parent', children=[
     app_header,
@@ -151,7 +151,7 @@ layout = html.Div(id='parent', children=[
                     options=get_datasets(), # [9:]if f"datasets/" == i[:8]
                     value=[], style={'maxHeight':200,'overflowY':'auto','width':left_body_width},inputStyle={"margin-right":checklist_pixel_padding_between }),
                 html.Div(id='ds-buttons',children=[
-                    html.Div([html.Button(id='refresh-ds',children=[dcc.Loading(html.Div(id='ds_ref_content',children=ds_ref_content),type="circle")],style={'width':refresh_button_width,"align-items":'center','padding':0})],style={"display": "inline-block"}), #,'margin': 0
+                    html.Div([html.Button(id='refresh-ds',children=[dcc.Loading(html.Div(id='ds_ref_content',children=ref_content),type="circle")],style={'width':refresh_button_width,"align-items":'center','padding':0})],style={"display": "inline-block"}), #,'margin': 0
                     html.Div([dcc.Upload(
                         id='upload-ds',
                         children=html.Button('Upload Dataset(s)'),
@@ -232,6 +232,15 @@ def update_pretrained_value(pretrained_value):
     return {"value":pretrained_value}
 
 @callback(
+    Output('pretrained-select', 'options'),
+    Output('pm_ref_content', 'children'),
+    Input('refresh-pm', 'n_clicks'),
+)
+def update_pretrained_select(clicks):
+
+    return get_pretrained(),ref_content
+
+@callback(
     Output('pretrained-holder', 'children', allow_duplicate=True),
     Input('mode-select', 'value'),
     Input('alert-model-success', 'is_open'),
@@ -244,8 +253,10 @@ def update_pretrained_checklist(mode,is_open,pretrained_value):
         return [html.H4("Pretrained models:", style={'textAlign': "left"}),
 dcc.Dropdown(id='pretrained-select', style={'width': 200}, options=get_pretrained(),value=pretrained_value['value']),
 html.Div(id="pretrained-present", style={'textAlign': 'left'}),
- dcc.Upload(id='upload-pretrained', children=html.Button('Upload Pretrained Model(s)'), multiple=True, style={'textAlign': 'left'})
- ]
+        html.Div(id="button-holder-pretrained",children=[
+            html.Div([html.Button(id='refresh-pm',children=[dcc.Loading(html.Div(id='pm_ref_content',children=ref_content),type="circle")],style={'width':refresh_button_width,"align-items":'center','padding':0,"marginLeft":0})],style={"display": "inline-block"}),
+            html.Div(dcc.Upload(id='upload-pretrained', children=html.Button('Upload Pretrained Model(s)'), multiple=True, style={'textAlign': 'left'}),style={"display": "inline-block"})
+    ],style={'textAlign': 'left'})]
     else:
         return []
 @callback(
@@ -596,7 +607,7 @@ def update_data_metadata_dict(known_datasets,selected_datasets,click_trigger,dat
     print("DMD:")
     print(data_metadata_dict)
 
-    return data_metadata_dict,False,ds_ref_content
+    return data_metadata_dict,False,ref_content
 
 
 @callback(
@@ -1068,9 +1079,9 @@ def datasets_to_gcp(filename,contents,data_metadata_dict):
             else:
                 valid = False
     else:
-        return data_metadata_dict,None,None,None,None,get_datasets(),False,ds_ref_content
+        return data_metadata_dict,None,None,None,None,get_datasets(),False,ref_content
 
-    return data_metadata_dict,valid,not valid,message,None,get_datasets(),False,ds_ref_content
+    return data_metadata_dict,valid,not valid,message,None,get_datasets(),False,ref_content
 
 #similar to the one below,
 

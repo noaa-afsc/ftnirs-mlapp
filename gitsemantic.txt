@@ -4,6 +4,4 @@ git tag vx.x.x
 git push
 git push origin vx.x.x
 
-
-when updating the live app to the new tag, need to specify manually in the .env file to enforce the change. This will indicate to the dockerfile
-which version to pull 
+logic contained in both local and webapp to update the version automatically. To deploy to an old version of the webapp, checkout to an older commit. 
