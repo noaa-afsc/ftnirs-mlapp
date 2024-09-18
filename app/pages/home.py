@@ -72,6 +72,34 @@ refresh_button_width = 40
 #this will be supplied in callbacks to make the loading icon show up on button click
 ref_content = [html.Img(src=encode_image("./static/refresh-arrow.png"),style={"width":"20px","height":'auto'})]
 
+filter_and_choice_params = html.Div([
+html.Div("Filter choice:"),
+dcc.Dropdown(id='filter',options=['savgol','moving_average','gaussian','median','wavelet','fourier','pca'], value='savgol'),
+html.Div("Scaling choice:"),
+dcc.Dropdown(id='scaling',options=['minmax', 'standard', 'maxabs', 'robust', 'normalize'], value='minmax'),
+])
+
+basic_model_architecture_params = html.Div([
+html.Div(id='mp-title',children="Use maximum pooling: False"),
+daq.ToggleSwitch(id='max-pooling', value=False),
+html.Div("Number of convolutional layers:"), #has annoying spinner, could either change to not number input, or ignore/deal with it. Needs to be fixed in css,
+                                     #maybe come back on it if I overhaul that later.
+dcc.Input(id="num_conv_layers",type="number",placeholder="integer"),
+html.Div("Kernel size:"),
+dcc.Input(id="kernel_size", type="number",placeholder="integer"),
+html.Div("Stride size:"),
+dcc.Input(id="stride_size", type="number",placeholder="integer"),
+html.Div("Dropout rate:"),
+dcc.Input(id="dropout_rate", type="number",placeholder="float"),
+html.Div("Number of filters:"),
+dcc.Input(id="num_filters", type="number",placeholder="integer"),
+html.Div("Number of dense units:"),
+dcc.Input(id="dense_units", type="number",placeholder="integer"),
+html.Div("Dropout rate (2):"),
+dcc.Input(id="dropout_rate2", type="number",placeholder="float")
+])
+
+
 layout = html.Div(id='parent', children=[
     app_header,
     html.Div(
@@ -168,7 +196,7 @@ layout = html.Div(id='parent', children=[
                                      options=["Training", "Inference", "Fine-tuning"],style={'width': 200}), #
                         html.Div(id='mode-select-output', style={'textAlign': 'left'}),
                         html.Div(id = "approaches-holder"),
-                        html.Div(id = "pretrained-holder")], style={'vertical-align': 'top', 'textAlign': 'center','height': 350,'maxHeight': 350,"overflowY":'auto','width':left_body_width})])
+                        html.Div(id = "pretrained-holder")], style={'vertical-align': 'top', 'textAlign': 'center','height': 375,'maxHeight': 375,"overflowY":'auto','width':left_body_width})])
                 ],style={"display": "inline-block",'marginRight': horizontal_pane_margin,'height': top_row_max_height, 'width': left_col_width}),
 
         html.Div(
@@ -183,7 +211,7 @@ layout = html.Div(id='parent', children=[
                 html.H2(id='H2_3', children='Select Parameters',
                     style={'textAlign': 'center','marginBelow':H2_height_below_padding, 'height':H2_height}), #,'marginTop': 20
                 html.Div(id = "params-holder"),
-            ],style ={"display": "inline-block",'vertical-align': 'top','textAlign': 'left','width':right_col_width,'maxHeight':top_row_max_height,'overflowY':'auto'}),
+            ],style ={"display": "inline-block",'vertical-align': 'top','textAlign': 'left','width':right_col_width,'height':top_row_max_height,'overflowY':'auto'}), #'maxHeight':top_row_max_height
         ],style={'height':top_row_max_height,"paddingTop":header_height}),html.Hr(), #style={'marginBottom': 60}
     html.Div(id='middle_row',children=[
 
@@ -973,6 +1001,8 @@ def get_parameters(mode,approach):
 
             params_holder_subcomponents.append(html.Div(id='Training_params',children=[
                 html.H4("Training"),
+                html.Div("Seed:"),
+                dcc.Input(id="seed", type="number", placeholder="42"),
                 html.Div(id='splits_status',children='Define splits: False'),
                 daq.ToggleSwitch(id='define-splits',value=False,style={"width":"50%"}),
                 html.Div(id='splits_choice')
@@ -986,41 +1016,22 @@ def get_parameters(mode,approach):
                     #return ["test"],[],dcc.Slider(0, 20, 5,value=10,id='test-conditional-component')
                     params_holder_subcomponents.append(
                             html.Div(id='model_params',children=[html.H4("Basic model"),
-                            html.Div("Filter choice:"),
-                            dcc.Dropdown(id='filter',options=['savgol','moving_average','gaussian','median','wavelet','fourier','pca'], value='savgol'),
-                            html.Div("Scaling choice:"),
-                            dcc.Dropdown(id='scaling',options=['minmax', 'standard', 'maxabs', 'robust', 'normalize'], value='minmax'),
-                            html.Div(id='mp-title',children="Use maximum pooling: False"),
-                            daq.ToggleSwitch(id='max-pooling', value=False),
-                            html.Div("Number of convolutional layers:"), #has annoying spinner, could either change to not number input, or ignore/deal with it. Needs to be fixed in css,
-                                                                 #maybe come back on it if I overhaul that later.
-                            dcc.Input(id="num_conv_layers",type="number",placeholder="integer"),
-                            html.Div("Kernel size:"),
-                            dcc.Input(id="kernel_size", type="number",placeholder="integer"),
-                            html.Div("Stride size:"),
-                            dcc.Input(id="stride_size", type="number",placeholder="integer"),
-                            html.Div("Dropout rate:"),
-                            dcc.Input(id="dropout_rate", type="number",placeholder="float"),
-                            html.Div("Number of filters:"),
-                            dcc.Input(id="num_filters", type="number",placeholder="integer"),
-                            html.Div("Number of dense units:"),
-                            dcc.Input(id="dense_units", type="number",placeholder="integer"),
-                            html.Div("Dropout rate (2):"),
-                            dcc.Input(id="dropout_rate2", type="number",placeholder="float"),
+                            filter_and_choice_params,
+                            basic_model_architecture_params if mode == 'Training' else None
                             ],style = {'width':"50%"}))
                             #html.Div(id='a_specific_param-name',style={'textAlign': 'left'},children="a_specific_param"),
                             #dcc.Slider(0, 20, 5,value=10,id='a_specific_param')]))
                 elif approach == "hyperband tuning model":
-                    params_holder_subcomponents.append(html.Div(id='model_params',children=[html.H4('hyperband tuning model'),dcc.Checklist(id='checklist-params', options=["on_GPU","other thing"], value=[],inputStyle={"margin-right":checklist_pixel_padding_between})]))
-                elif approach == "new_exp_arch":
-                    #return ["on_GPU","other thing","secret third thing"],[],[]
-                    params_holder_subcomponents.append(html.Div(id='model_params',children=[html.H4('new_exp_arch'),dcc.Checklist(id='checklist-params', options=["on_GPU","other thing","secret third thing"], value=[])]))
+                    params_holder_subcomponents.append(html.Div(id='model_params',children=[html.H4('hyperband tuning model'),
+                                                                                            filter_and_choice_params
+                                                                                            ],style = {'width':"50%"})) #dcc.Checklist(id='checklist-params', options=["on_GPU","other thing"], value=[],inputStyle={"margin-right":checklist_pixel_padding_between})
     elif mode == 'Inference':
 
             #use the current selection and model metadata dict to locate any model specific inference settings..?
 
             params_holder_subcomponents.append(html.Div(id = 'Inference_params',children=[
-                html.H4("Inference"),dcc.Checklist(id='checklist-params', options=["on_GPU"], value=[False],inputStyle={"margin-right":checklist_pixel_padding_between})
+                html.H4("Inference") #,
+                #dcc.Checklist(id='checklist-params', options=["on_GPU"], value=[False],inputStyle={"margin-right":checklist_pixel_padding_between})
             ]))
 
     else:
