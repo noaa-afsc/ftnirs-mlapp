@@ -183,7 +183,7 @@ layout = html.Div(id='parent', children=[
                 html.H2(id='H2_3', children='Select Parameters',
                     style={'textAlign': 'center','marginBelow':H2_height_below_padding, 'height':H2_height}), #,'marginTop': 20
                 html.Div(id = "params-holder"),
-            ],style ={"display": "inline-block",'vertical-align': 'top','textAlign': 'left','width':right_col_width}),
+            ],style ={"display": "inline-block",'vertical-align': 'top','textAlign': 'left','width':right_col_width,'maxHeight':top_row_max_height,'overflowY':'auto'}),
         ],style={'height':top_row_max_height,"paddingTop":header_height}),html.Hr(), #style={'marginBottom': 60}
     html.Div(id='middle_row',children=[
 
@@ -734,14 +734,20 @@ def unpack_children_for_values(out_dict,children):
 
     if isinstance(children,dict):
         if 'value' in children:
+
+            #if value is a list, possible to have multiple of them
             if 'options' in children:
-                for p in children['options']:
-                    if isinstance(p,dict):
-                        p = p['value']
-                    if p in children['value']:
-                        out_dict[p] = True
-                    else:
-                        out_dict[p] = False
+                # if value is not a list, only one selection possible
+                if not isinstance(children['value'], list):
+                    out_dict[children['id']] = children['value']
+                else:
+                    for p in children['options']:
+                        if isinstance(p,dict):
+                            p = p['value']
+                        if p in children['value']:
+                            out_dict[(p,children['id'])] = True #maybe should store more data of this..
+                        else:
+                            out_dict[(p,children['id'])] = False #(children['id'],False)
             elif 'id' in children:
                 #print(children)
                 out_dict[children['id']] = children['value']
@@ -931,20 +937,27 @@ def model_run_event(n_clicks,mode,pretrained_model,approach,columns,datasets,par
                 Output('test_val', "children"),
                 Input('splits-slider', 'value')
           )
-def test_fxn2(slider_val):
+def populate_splits_fields(slider_val):
 
    return f"Train (%): {slider_val[0]}",f"Validation (%): {slider_val[1]-slider_val[0]}",f"Test (%): {100-slider_val[1]}"
 @callback(Output('splits_status',"children"),
                 Output('splits_choice',"children"),
                 Input('define-splits', 'value')
           )
-def test_fxn(splits_val):
+def populate_split_selection(splits_val):
 
     #return f"Define splits: {splits_val}",[html.H5("| -- Train -- | -- Val -- | -- Test -- |"),dcc.RangeSlider(0, 100, 5, value=[60, 80], id='splits-slider', allowCross=False),html.Div("0% to the first value is the training split, the first value to the second value is the validation split, and the second value to 100% is test. Numbers represent percentages. Train and val must each be > 0%"),] if splits_val else None
 
     return f"Define splits: {splits_val}", [html.Div(id='train_val'),html.Div(id='val_val'),html.Div(id='test_val'),
                                             dcc.RangeSlider(0, 100, 1, marks = {x*5:x*5 for x in range(20)}, value=[60, 80], id='splits-slider',
                                                             allowCross=False)]  if splits_val else None
+
+@callback(Output('mp-title',"children"),
+                Input('max-pooling', 'value')
+          )
+def populate_max_pooling(mp_val):
+
+    return f"Use maximum pooling: {mp_val}"
 @callback(#Output('params-select', 'options'),
                     #Output('params-select', 'value'),
                     Output('params-holder', 'children'),
@@ -961,7 +974,7 @@ def get_parameters(mode,approach):
             params_holder_subcomponents.append(html.Div(id='Training_params',children=[
                 html.H4("Training"),
                 html.Div(id='splits_status',children='Define splits: False'),
-                daq.ToggleSwitch(id='define-splits',value=False),
+                daq.ToggleSwitch(id='define-splits',value=False,style={"width":"50%"}),
                 html.Div(id='splits_choice')
             ]))
 
@@ -971,9 +984,32 @@ def get_parameters(mode,approach):
             if approach is not None:
                 if approach == "Basic model":
                     #return ["test"],[],dcc.Slider(0, 20, 5,value=10,id='test-conditional-component')
-                    params_holder_subcomponents.append(html.Div(id='model_params',children=[html.H4("Basic model"),dcc.Checklist(id='checklist-params', options=["test"], value=[],inputStyle={"margin-right":checklist_pixel_padding_between}),
-                            html.Div(id='a_specific_param-name',style={'textAlign': 'left'},children="a_specific_param"),
-                            dcc.Slider(0, 20, 5,value=10,id='a_specific_param')]))
+                    params_holder_subcomponents.append(
+                            html.Div(id='model_params',children=[html.H4("Basic model"),
+                            html.Div("Filter choice:"),
+                            dcc.Dropdown(id='filter',options=['savgol','moving_average','gaussian','median','wavelet','fourier','pca'], value='savgol'),
+                            html.Div("Scaling choice:"),
+                            dcc.Dropdown(id='scaling',options=['minmax', 'standard', 'maxabs', 'robust', 'normalize'], value='minmax'),
+                            html.Div(id='mp-title',children="Use maximum pooling: False"),
+                            daq.ToggleSwitch(id='max-pooling', value=False),
+                            html.Div("Number of convolutional layers:"), #has annoying spinner, could either change to not number input, or ignore/deal with it. Needs to be fixed in css,
+                                                                 #maybe come back on it if I overhaul that later.
+                            dcc.Input(id="num_conv_layers",type="number",placeholder="integer"),
+                            html.Div("Kernel size:"),
+                            dcc.Input(id="kernel_size", type="number",placeholder="integer"),
+                            html.Div("Stride size:"),
+                            dcc.Input(id="stride_size", type="number",placeholder="integer"),
+                            html.Div("Dropout rate:"),
+                            dcc.Input(id="dropout_rate", type="number",placeholder="float"),
+                            html.Div("Number of filters:"),
+                            dcc.Input(id="num_filters", type="number",placeholder="integer"),
+                            html.Div("Number of dense units:"),
+                            dcc.Input(id="dense_units", type="number",placeholder="integer"),
+                            html.Div("Dropout rate (2):"),
+                            dcc.Input(id="dropout_rate2", type="number",placeholder="float"),
+                            ],style = {'width':"50%"}))
+                            #html.Div(id='a_specific_param-name',style={'textAlign': 'left'},children="a_specific_param"),
+                            #dcc.Slider(0, 20, 5,value=10,id='a_specific_param')]))
                 elif approach == "hyperband tuning model":
                     params_holder_subcomponents.append(html.Div(id='model_params',children=[html.H4('hyperband tuning model'),dcc.Checklist(id='checklist-params', options=["on_GPU","other thing"], value=[],inputStyle={"margin-right":checklist_pixel_padding_between})]))
                 elif approach == "new_exp_arch":
