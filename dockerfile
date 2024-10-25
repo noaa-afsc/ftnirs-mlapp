@@ -5,8 +5,14 @@ RUN pip install --upgrade pip
 WORKDIR /tmp
 
 COPY requirements.txt .
+COPY .env .
 
 RUN pip install --no-cache-dir --upgrade -r requirements.txt
+
+#do this seperately- maybe better to include in requirements.txt, but slightly more complex to edit within the file
+ARG MLCODE_RELEASE
+RUN export MLCODE_RELEASE=$(grep MLCODE_RELEASE .env | cut -d '=' -f2) && \
+pip install git+https://github.com/DanWoodrichNOAA/ftnirs-ml-codebase.git@$VERSION_TAG
 
 COPY . . 
 

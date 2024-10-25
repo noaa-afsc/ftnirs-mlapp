@@ -46,7 +46,7 @@ app_header = html.Div([
                              style={"display": "inline-block", 'textAlign': 'right'}),
                     html.A(
                         html.Img(src=encode_image("./static/github-sign.png"), style={"width": "20px", "marginLeft": 10, "marginRight": 10}),
-                        href="https://github.com/michael-zakariaie-noaa/ftnirs-ml-codebase/tree/dan-dev", style={"display": "inline-block", "margin": 0}, target="_blank")
+                        href="https://github.com/DanWoodrichNOAA/ftnirs-ml-codebase", style={"display": "inline-block", "margin": 0}, target="_blank")
                 ],style={"float": "right"})],style={"height": first_row_height,"display": "inline-block","width":"100%","backgroundColor":"white"})],
             #    ],style={"float":"right"})],
             style={'margin': 0,"vertical-align":"middle"}),

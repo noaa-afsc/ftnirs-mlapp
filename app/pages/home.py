@@ -27,7 +27,7 @@ import uuid
 from dotenv import load_dotenv
 from app_constant import app_header,header_height,encode_image
 
-load_dotenv('./tmp/.env')
+load_dotenv('../tmp/.env')
 
 dash.register_page(__name__, path='/',name = os.getenv("APPNAME")) #
 
@@ -43,6 +43,11 @@ GCP_PROJ="ggn-nmfs-afscftnirs-dev-97fc"
 STORAGE_CLIENT = storage.Client(project=GCP_PROJ)
 DATA_BUCKET = os.getenv("DATA_BUCKET")
 TMP_BUCKET = os.getenv("TMP_BUCKET")
+
+print(os.getenv("DATA_BUCKET"))
+print(STORAGE_CLIENT)
+print(DATA_BUCKET)
+print(STORAGE_CLIENT.list_blobs(DATA_BUCKET))
 
 def get_objs():
     objs = list(STORAGE_CLIENT.list_blobs(DATA_BUCKET))
