@@ -3,7 +3,6 @@ import dash_bootstrap_components as dbc
 import os
 from dotenv import load_dotenv
 
-
 external_stylesheets = [dbc.themes.BOOTSTRAP,'https://codepen.io/chriddyp/pen/bWLwgP.css']
 
 #check for any env files. Local uses ./tmp/.env, and cloud build uses both docker compose env (static) and ./tmp
@@ -11,8 +10,8 @@ external_stylesheets = [dbc.themes.BOOTSTRAP,'https://codepen.io/chriddyp/pen/bW
 if os.path.isfile('../tmp/.env'):
     load_dotenv('../tmp/.env')
 
-if os.path.isfile('./tmp/.dynenv'):
-    load_dotenv('./tmp/.dynenv')
+if os.path.isfile('../tmp/.dynenv'):
+    load_dotenv('../tmp/.dynenv')
 
 #if there isn't a specific webapp version available (not provided in .env or by docker build (.dynenv),
 #use the value from the git repo.

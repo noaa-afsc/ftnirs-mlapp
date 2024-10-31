@@ -16,16 +16,22 @@ from dash.exceptions import PreventUpdate
 import pandas as pd
 import random as rand
 from google.cloud import storage
+import pickle
 import plotly.graph_objects as go
 import time
 import base64
 import h5py
-import app_data
+import tensorflow as tf
+#import app_data
+from ftnirsml.constants import WN_STRING_NAME,STANDARD_COLUMN_NAMES,INFORMATIONAL,RESPONSE_COLUMNS,TRAINING_APPROACHES
 import diskcache
 #safer and less bespoke than what I previously implemented.
 import uuid
 from dotenv import load_dotenv
 from app_constant import app_header,header_height,encode_image
+from ftnirsml.code import loadModelWithMetadata, wnExtract
+#import zipfile
+import tempfile
 
 load_dotenv('../tmp/.env')
 
@@ -45,9 +51,6 @@ DATA_BUCKET = os.getenv("DATA_BUCKET")
 TMP_BUCKET = os.getenv("TMP_BUCKET")
 
 print(os.getenv("DATA_BUCKET"))
-print(STORAGE_CLIENT)
-print(DATA_BUCKET)
-print(STORAGE_CLIENT.list_blobs(DATA_BUCKET))
 
 def get_objs():
     objs = list(STORAGE_CLIENT.list_blobs(DATA_BUCKET))
@@ -103,7 +106,6 @@ dcc.Input(id="dense_units", type="number",placeholder="integer"),
 html.Div("Dropout rate (2):"),
 dcc.Input(id="dropout_rate2", type="number",placeholder="float")
 ])
-
 
 layout = html.Div(id='parent', children=[
     app_header,
@@ -168,8 +170,8 @@ layout = html.Div(id='parent', children=[
         dcc.Store(id='params_dict', storage_type='memory',data = {}),
         dcc.Store(id='dataset_titles', storage_type='memory',data = {}),
         dcc.Store(id='data_metadata_dict', storage_type='memory',data = {}),
-        dcc.Store(id='columns_dict', storage_type='memory', data={"wav":[app_data.WN_STRING_NAME],'std':[i for i in app_data.STANDARD_COLUMN_NAMES],'oc':[]}),
-        #dcc.Store(id='columns_dict', storage_type='memory', data={"wav":{app_data.wn_string_name},'std':{i for i in app_data.STANDARD_COLUMN_NAMES},'oc':set()}), #more effecient but doesn't work with framework
+        dcc.Store(id='columns_dict', storage_type='memory', data={"wav":[WN_STRING_NAME],'std':[i for i in STANDARD_COLUMN_NAMES],'oc':[]}),
+        #dcc.Store(id='columns_dict', storage_type='memory', data={"wav":{WN_STRING_NAME},'std':{i for i in STANDARD_COLUMN_NAMES},'oc':set()}), #more effecient but doesn't work with framework
         dcc.Store(id='pretrained_model_metadata_dict', storage_type='memory', data={}),
         dcc.Store(id='pretrained_value_dict', storage_type='memory', data={'value':None}),
         dcc.Store(id='approaches_value_dict', storage_type='memory', data={'value': None}),
@@ -284,7 +286,7 @@ def update_pretrained_checklist(mode,is_open,pretrained_value):
 
     if mode != "Training":
         return [html.H4("Pretrained models:", style={'textAlign': "left"}),
-dcc.Dropdown(id='pretrained-select', style={'width': 200}, options=get_pretrained(),value=pretrained_value['value']),
+dcc.Dropdown(id='pretrained-select', style={'width': 350}, options=get_pretrained(),value=pretrained_value['value']),
 html.Div(id="pretrained-present", style={'textAlign': 'left'}),
         html.Div(id="button-holder-pretrained",children=[
             html.Div([html.Button(id='refresh-pm',children=[dcc.Loading(html.Div(id='pm_ref_content',children=ref_content),type="circle")],style={'width':refresh_button_width,"align-items":'center','padding':0,"marginLeft":0})],style={"display": "inline-block"}),
@@ -310,7 +312,7 @@ def update_approach_checklist(mode,pretrain_dict,pretrain_val,approach_val):
     print('val')
     print(pretrain_val)
 
-    opts = app_data.TRAINING_APPROACHES
+    opts = TRAINING_APPROACHES
 
     if mode != "Inference":
 
@@ -350,7 +352,7 @@ def present_approach_metadata(approach,mode):
 
     if mode != "Inference" and approach != None:
 
-        approach_metadata = app_data.TRAINING_APPROACHES[approach]
+        approach_metadata = TRAINING_APPROACHES[approach]
 
         obj = [html.Div(children=[html.Strong(str(key)), html.Span(f": {approach_metadata[key]}")], style={'marginBottom': 10}) for key in approach_metadata if key not in hidden_metadata_keys]
 
@@ -372,9 +374,9 @@ def present_pretrained_metadata(pretrained_model_metadata_dict,mode,pretrained):
     if mode != "Training":
 
         if pretrained!= None:
-            pretrained_metadata = pretrained_model_metadata_dict[pretrained]
-            obj = [html.Div(children=[html.Strong(str(key)), html.Span(f": {pretrained_metadata[key]}")],
-                            style={'marginBottom': 10}) for key in pretrained_metadata]
+            pretrained_metadata = sorted(pretrained_model_metadata_dict[pretrained].items())
+            obj = [html.Div(children=[html.Strong(str(a)), html.Span(f": {b}")],
+                            style={'marginBottom': 10}) for a,b in pretrained_metadata]
             return [html.Div(children=obj)] #html.H5("Pretrained Info:"),
         else:
             return None
@@ -443,17 +445,17 @@ def present_columns(data_dict,model_dict,datasets,mode,pretrained_val,approach_v
     #for training and inference, do not allow training for partial presence of wav numbers
     #equivalent = f"{(ds_count-len(wave_counts)+1)}/{ds_count}" if ds_count==0 else "NA"
 
-    wav_str = f"{app_data.WN_STRING_NAME} valid: {valid_waves}/{ds_count}, equivalent: {(ds_count-len(wave_counts)+1)}/{ds_count}"
+    wav_str = f"{WN_STRING_NAME} valid: {valid_waves}/{ds_count}, equivalent: {(ds_count-len(wave_counts)+1)}/{ds_count}"
 
     standard_cols_counter = Counter([i for sublist in [ast.literal_eval(data_dict[i]['standard_columns']) for i in datasets] for i in sublist])
     other_cols_counter = Counter([i for sublist in [ast.literal_eval(data_dict[i]['other_columns']) for i in datasets] for i in sublist])
 
-    for i in app_data.NON_BIO_COLUMNS:
+    for i in INFORMATIONAL:
         if i in standard_cols_counter:
             standard_excluded.append((str(i),f'{i} ({standard_cols_counter[i]}/{ds_count}) (not a biological factor column)',standard_cols_counter[i]/ds_count))
             del standard_cols_counter[i]
 
-    for i in app_data.RESPONSE_COLUMNS:
+    for i in RESPONSE_COLUMNS:
         if i in standard_cols_counter:
             standard_excluded.append((str(i),f'{i} ({standard_cols_counter[i]}/{ds_count}) (response column)',standard_cols_counter[i]/ds_count))
             del standard_cols_counter[i]
@@ -461,10 +463,12 @@ def present_columns(data_dict,model_dict,datasets,mode,pretrained_val,approach_v
     wavs_exclude = False
     if pretrained_val != None:
         if mode == "Inference":
-            if 'column_names' in model_dict[pretrained_val]:
-                pretrained_include = [i for i in model_dict[pretrained_val]['column_names']] #pipe in split to this, if specified in to be created and linked training parameters
+            if 'bio_columns' in model_dict[pretrained_val]:
+                #import code
+                #code.interact(local=dict(globals(), **locals()))
+                pretrained_include = [i for i in ast.literal_eval(model_dict[pretrained_val]['bio_columns'])]+[WN_STRING_NAME] #pipe in split to this, if specified in to be created and linked training parameters
                 #exclude wavs
-                if app_data.WN_STRING_NAME not in pretrained_include:
+                if WN_STRING_NAME not in pretrained_include:
                     wavs_exclude = True
                     wav_str = wav_str + " (not used in pretrained model)"
                 #exclude standard
@@ -491,7 +495,7 @@ def present_columns(data_dict,model_dict,datasets,mode,pretrained_val,approach_v
     #import code
     #code.interact(local=dict(globals(), **locals()))
 
-    wav_opts = [{"value":app_data.WN_STRING_NAME, "label":wav_str,"disabled":True if (valid_waves != ds_count or wavs_exclude) else False,
+    wav_opts = [{"value":WN_STRING_NAME, "label":wav_str,"disabled":True if (valid_waves != ds_count or wavs_exclude) else False,
                  'extra':(valid_waves/ds_count,ds_count-len(wave_counts)+1/ds_count)}]
 
     #consolidate all values, and apply previous selections (as relevant)
@@ -938,7 +942,24 @@ def model_run_event(n_clicks,mode,pretrained_model,approach,columns,datasets,par
 
                 #this is where model will actually run
                 #if mode == "Training":
-                data,artifacts,stats,dataset_titles = run_model(mode,approach,datasets,run_id)
+
+                #just write it here to take advantage of variables, turn into fxns later as sensible.
+
+                data = [pd.read_csv(io.BytesIO(STORAGE_CLIENT.bucket(DATA_BUCKET).blob(f"datasets/{i}").download_as_bytes())) for i in datasets]
+
+                #load in model if needed.
+                if mode != "Training":
+                    model, metadata = extract_model(STORAGE_CLIENT.bucket(DATA_BUCKET).blob(f"models/{pretrained_model}").download_as_bytes(),pretrained_model,upload_to_gcp=False)
+                else:
+                    model, metadata = None,None
+                
+                #todo implement the ml stuff
+                #import code
+                #code.interact(local=dict(globals(), **locals()))
+
+                #formatted_data = format_data(data)
+
+                #data,artifacts,stats,dataset_titles = run_model(mode,approach,datasets,run_id)
 
                 message = "Run Succeeded!"
 
@@ -1014,9 +1035,8 @@ def get_parameters(mode,approach):
             ]))
 
             #training
-            #this will largely be populated manually (hardcoded).  Right now, that will look like Michael explaining to Dan
-            #the relevant training hyperparameters to expose per approach ("archetecture").
-            if approach is not None:
+            #this will largely be populated manually (hardcoded).
+            if mode == "Training": #was 'approach is not None', but right now having the fine tuning inherit previous parameters.
                 if approach == "Basic model":
                     #return ["test"],[],dcc.Slider(0, 20, 5,value=10,id='test-conditional-component')
                     params_holder_subcomponents.append(
@@ -1171,25 +1191,54 @@ def trained_model_publish(n_clicks,run_name,description,run_id):
     Output("alert-model-fail", "children"),
     Input('upload-pretrained', 'filename'),Input('upload-pretrained', 'contents')
 )
-def models_to_gcp(filename, contents):
+def models_to_gcp(filenames, contents):
 
     success = True
     # this gets called by alert on startup as this is an output, make sure to not trigger alert in this case
-    if not filename == None and not contents == None:
-        for i in zip(filename, contents):
+    if not filenames == None and not contents == None:
+        for i in zip(filenames, contents):
 
-            valid,message,data,metadata = data_check_models(i,load_model = True)
+            if i[0].endswith('.zip'):
+                valid = True
+                message = None
+            else:
+                valid = False
+                message = "not named like a .zip file"
 
             if valid:
 
-                blob = STORAGE_CLIENT.bucket(DATA_BUCKET).blob(f'models/{i[0]}')
+                content_type, content_string = i[1].split(',')
 
-                blob.upload_from_string(data, 'text/csv')
+                decoded = base64.b64decode(content_string)
 
-                #for every piece of metadata, attach it to the cloud object as well for easy retrieval
+                model, metadata = extract_model(decoded,i[0],upload_to_gcp=True)
+
+                #tmpf = tempfile.NamedTemporaryFile(suffix=".keras",delete=False)
+                #model.save(tmpf.name) #think this will just overwrite the tempfile, but, does allow for name to be rng to avoid multiuser contention
+                #blob.upload_from_filename(tmpf.name)
+                #tmpf.close()
+                #os.unlink(tmpf.name)
+
+                #attach the full metadata file as a .pickle. Also, attach particular accessory metadata that will
+                #be needed later: all columns used in current model, wn attributes, description... parameter values?
                 if metadata is not None:
+
+                    if isinstance(metadata,list):
+                        num_trainings = len(metadata)
+                        #import code
+                        #code.interact(local=dict(globals(), **locals()))
+                        metadata = metadata[-1]
+                    else:
+                        num_trainings = 1
+
+                    _, _, wave_number_min, wave_number_step, wave_number_max, _ = wnExtract(metadata['model_col_names']["wn_columns_names_ordered"])
+
                     print('attaching metadata')
-                    attach_metadata_to_blob(metadata, blob)
+                    custom_metadata = {'num_trainings':num_trainings,'description':metadata['description'],"max_bio_columns":len(metadata['model_col_names']["bio_column_names_ordered_padded"]),\
+                    'wave_number_min':wave_number_min,'wave_number_max':wave_number_max,"wave_number_step":wave_number_step,'bio_columns':metadata['model_col_names']["bio_column_names_ordered"],\
+                    }
+
+                    attach_metadata_to_blob(custom_metadata, blob)
                 else:
                     attach_null_metadata(blob)
 
@@ -1199,6 +1248,20 @@ def models_to_gcp(filename, contents):
         return success, not success, message
     else:
         return False, False, None
+
+def extract_model(model_zip_bytes,model_zip_name,upload_to_gcp=False):
+
+    blob = STORAGE_CLIENT.bucket(DATA_BUCKET).blob(f'models/{model_zip_name}')
+
+    with tempfile.NamedTemporaryFile(delete=True, suffix=".zip") as temp_zip:
+        temp_zip.write(model_zip_bytes)
+        model, metadata = loadModelWithMetadata(temp_zip, model_zip_name[:-4])
+        if upload_to_gcp:
+            blob.upload_from_filename(temp_zip.name)
+
+    return model, metadata
+
+
 def data_check_datasets(file,load_data = True):
     message = "Dataset upload unsuccessful: did not pass standards checking"
 
@@ -1283,7 +1346,7 @@ def data_check_datasets(file,load_data = True):
         #code.interact(local=dict(globals(), **locals()))
 
         for f in non_wave_columns:
-            if f in app_data.STANDARD_COLUMN_NAMES:
+            if f in STANDARD_COLUMN_NAMES:
                 standard_cols.append(f)
             else:
                 other_cols.append(f)
@@ -1299,6 +1362,11 @@ def data_check_datasets(file,load_data = True):
             return False,message,None,None
 
 def data_check_models(file,load_model):
+
+    import code
+    code.interact(local=dict(globals(), **locals()))
+
+    #unpack the zip into tempdir.
 
     valid = True
     message = None
