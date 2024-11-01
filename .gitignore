@@ -6,3 +6,6 @@ tmp
 desktop.ini
 cache/
 cache/*
+rotate ftnirsml dep.txt
+gitsemantic.txt
+app/session_logs.log

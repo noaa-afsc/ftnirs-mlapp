@@ -1,7 +1,8 @@
-from dash import Dash
+from dash import Dash,Output,Input
 import dash_bootstrap_components as dbc
 import os
 from dotenv import load_dotenv
+from ftnirsml.constants import TRAINING_APPROACHES
 
 external_stylesheets = [dbc.themes.BOOTSTRAP,'https://codepen.io/chriddyp/pen/bWLwgP.css']
 
@@ -26,6 +27,19 @@ if "WEBAPP_RELEASE" not in os.environ:
 app = Dash(__name__, requests_pathname_prefix=f"/{os.getenv('APPNAME')}/", routes_pathname_prefix=f"/{os.getenv('APPNAME')}/",
                     external_stylesheets=external_stylesheets,
                     use_pages=True)
+
+#attempt to add some dynamic callbacks in here, since with app.callback (with app object available) I can use
+#lambda decorators to deal with bool variables.
+bool_callbacks_needed = {}
+for i in TRAINING_APPROACHES.keys():
+    if 'parameters' in TRAINING_APPROACHES[i]:
+        for m in TRAINING_APPROACHES[i]['parameters'].keys():
+            if TRAINING_APPROACHES[i]['parameters'][m]["data_type2"]==bool:
+                bool_callbacks_needed[m]=TRAINING_APPROACHES[i]['parameters'][m]
+
+#this is ill as hell!
+for i in bool_callbacks_needed:
+    app.callback(Output(i + "-title", "children"),Input(i, 'value'))(lambda val: f"{bool_callbacks_needed[i]['display_name'].split(':')[0]}: {val}")
 
 if __name__ == '__main__':
 

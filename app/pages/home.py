@@ -21,15 +21,16 @@ import plotly.graph_objects as go
 import time
 import base64
 import h5py
-import tensorflow as tf
 #import app_data
-from ftnirsml.constants import WN_STRING_NAME,STANDARD_COLUMN_NAMES,INFORMATIONAL,RESPONSE_COLUMNS,TRAINING_APPROACHES
+from ftnirsml.constants import WN_MATCH,INFORMATIONAL,RESPONSE_COLUMNS,SPLITNAME,WN_STRING_NAME,IDNAME,STANDARD_COLUMN_NAMES,MISSING_DATA_VALUE,ONE_HOT_FLAG,MISSING_DATA_VALUE_UNSCALED,TRAINING_APPROACHES
 import diskcache
 #safer and less bespoke than what I previously implemented.
 import uuid
+import logging
+from logging.handlers import RotatingFileHandler
 from dotenv import load_dotenv
 from app_constant import app_header,header_height,encode_image
-from ftnirsml.code import loadModelWithMetadata, wnExtract
+from ftnirsml.code import loadModelWithMetadata, wnExtract, format_data, TrainingModeWithoutHyperband, TrainingModeWithHyperband,  hash_dataset
 #import zipfile
 import tempfile
 
@@ -41,6 +42,15 @@ dash.register_page(__name__, path='/',name = os.getenv("APPNAME")) #
 #is multiple user and thread safe and fault tolerant.
 
 cache = diskcache.Cache("./cache")
+
+log_handler = RotatingFileHandler("session_logs.log",maxBytes=5*1024*1024)
+log_handler.setLevel(logging.DEBUG)
+formatter = logging.Formatter('% (asctime)s - %(levelname)s - %(message)s')
+log_handler.setFormatter(formatter)
+
+LOGGER = logging.getLogger('session_logger')
+LOGGER.setLevel(logging.DEBUG)
+LOGGER.addHandler(log_handler)
 
 #this should be an .env variable
 GCP_PROJ="ggn-nmfs-afscftnirs-dev-97fc"
@@ -63,7 +73,6 @@ def get_datasets():
 def get_pretrained():
     return [i[7:] for i in get_objs() if "models/" == i[:7]]
 
-
 #some graphical variables:
 top_row_max_height = 700
 horizontal_pane_margin = 20#50
@@ -74,7 +83,7 @@ H2_height = 50
 H2_height_below_padding = 30
 checklist_pixel_padding_between = "5px"
 left_body_width ="95%"
-BUTTON_DEFAULT_STYLE = {"font-weight": 900,"width":100,"height":100}
+
 refresh_button_width = 40
 
 #this will be supplied in callbacks to make the loading icon show up on button click
@@ -87,25 +96,28 @@ html.Div("Scaling choice:"),
 dcc.Dropdown(id='scaling',options=['minmax', 'standard', 'maxabs', 'robust', 'normalize'], value='minmax'),
 ])
 
-basic_model_architecture_params = html.Div([
-html.Div(id='mp-title',children="Use maximum pooling: False"),
-daq.ToggleSwitch(id='max-pooling', value=False),
-html.Div("Number of convolutional layers:"), #has annoying spinner, could either change to not number input, or ignore/deal with it. Needs to be fixed in css,
-                                     #maybe come back on it if I overhaul that later.
-dcc.Input(id="num_conv_layers",type="number",placeholder="integer"),
-html.Div("Kernel size:"),
-dcc.Input(id="kernel_size", type="number",placeholder="integer"),
-html.Div("Stride size:"),
-dcc.Input(id="stride_size", type="number",placeholder="integer"),
-html.Div("Dropout rate:"),
-dcc.Input(id="dropout_rate", type="number",placeholder="float"),
-html.Div("Number of filters:"),
-dcc.Input(id="num_filters", type="number",placeholder="integer"),
-html.Div("Number of dense units:"),
-dcc.Input(id="dense_units", type="number",placeholder="integer"),
-html.Div("Dropout rate (2):"),
-dcc.Input(id="dropout_rate2", type="number",placeholder="float")
-])
+#sort the params in TRAINING_APPROACHES, then add the dash stuff to the existing dict.
+#based on the number of bool variables, spin off some dynamic callback functions as needed.
+#        TRAINING_APPROACHES[i]['dash_parameters']=html.Div([]
+for i in TRAINING_APPROACHES.keys():
+    if 'parameters' in TRAINING_APPROACHES[i]:
+        obj = []
+        for m in TRAINING_APPROACHES[i]["parameters"]:
+            if TRAINING_APPROACHES[i]["parameters"][m]["data_type2"]==bool:
+                obj.append(html.Div(id=m+'-title',children=TRAINING_APPROACHES[i]["parameters"][m]["display_name"]))
+                obj.append(daq.ToggleSwitch(id=m, value=TRAINING_APPROACHES[i]["parameters"][m]["default_value"]))
+            else:
+                obj.append(html.Div(TRAINING_APPROACHES[i]["parameters"][m]["display_name"]))
+                obj.append(dcc.Input(id=m, type=TRAINING_APPROACHES[i]["parameters"][m]["data_type"], \
+                                                         placeholder=str(TRAINING_APPROACHES[i]["parameters"][m]["data_type2"]).split(" ")[1][1:-2] + \
+                                     " (default: " + str(TRAINING_APPROACHES[i]["parameters"][m]["default_value"])+")"))
+
+        TRAINING_APPROACHES[i]["dash_params"]=html.Div(obj)
+
+#import code
+#code.interact(local=dict(globals(), **locals()))
+
+APP_STORAGE_TYPE = 'memory' #memory, session, local
 
 layout = html.Div(id='parent', children=[
     app_header,
@@ -167,17 +179,19 @@ layout = html.Div(id='parent', children=[
                 duration=4000)
         ],style={"position":"fixed","top":header_height+15,"zIndex":999,'width':"100%"}),
     html.Div(id = 'toprow',children=[
-        dcc.Store(id='params_dict', storage_type='memory',data = {}),
-        dcc.Store(id='dataset_titles', storage_type='memory',data = {}),
-        dcc.Store(id='data_metadata_dict', storage_type='memory',data = {}),
-        dcc.Store(id='columns_dict', storage_type='memory', data={"wav":[WN_STRING_NAME],'std':[i for i in STANDARD_COLUMN_NAMES],'oc':[]}),
+        dcc.Interval(id='interval-component',interval=1*1000, n_intervals=0),
+        dcc.Store(id='session-id', storage_type='local', data=str(uuid.uuid4())), #see if this can be recoverable, potentially. s
+        dcc.Store(id='params_dict', storage_type=APP_STORAGE_TYPE,data = {}),
+        dcc.Store(id='dataset_titles', storage_type=APP_STORAGE_TYPE,data = {}),
+        dcc.Store(id='data_metadata_dict', storage_type=APP_STORAGE_TYPE,data = {}),
+        dcc.Store(id='columns_dict', storage_type=APP_STORAGE_TYPE, data={"wav":[WN_STRING_NAME],'std':[i for i in STANDARD_COLUMN_NAMES],'oc':[]}),
         #dcc.Store(id='columns_dict', storage_type='memory', data={"wav":{WN_STRING_NAME},'std':{i for i in STANDARD_COLUMN_NAMES},'oc':set()}), #more effecient but doesn't work with framework
-        dcc.Store(id='pretrained_model_metadata_dict', storage_type='memory', data={}),
-        dcc.Store(id='pretrained_value_dict', storage_type='memory', data={'value':None}),
-        dcc.Store(id='approaches_value_dict', storage_type='memory', data={'value': None}),
+        dcc.Store(id='pretrained_model_metadata_dict', storage_type=APP_STORAGE_TYPE, data={}),
+        dcc.Store(id='pretrained_value_dict', storage_type=APP_STORAGE_TYPE, data={'value':None}),
+        dcc.Store(id='approaches_value_dict', storage_type=APP_STORAGE_TYPE, data={'value': None}),
         #dcc.Store(id='refresh-ds-count', storage_type='memory', data = 0),
-        dcc.Store(id='run_id', storage_type='memory'),
-        dcc.Store(id='dataset_select_last_clicked', storage_type='memory',data = False),
+        dcc.Store(id='run_id', storage_type=APP_STORAGE_TYPE),
+        dcc.Store(id='dataset_select_last_clicked', storage_type=APP_STORAGE_TYPE,data = False),
             html.Div(id='left col top row',children=[
             html.Div(id='datasets',children=[
                 html.H2(id='H2_1', children='Select Datasets',
@@ -205,28 +219,31 @@ layout = html.Div(id='parent', children=[
                         html.Div(id = "approaches-holder"),
                         html.Div(id = "pretrained-holder")], style={'vertical-align': 'top', 'textAlign': 'center','height': 375,'maxHeight': 375,"overflowY":'auto','width':left_body_width})])
                 ],style={"display": "inline-block",'marginRight': horizontal_pane_margin,'height': top_row_max_height, 'width': left_col_width}),
+        #,style={"display": "inline-block",'marginRight': horizontal_pane_margin,'height': top_row_max_height, 'width': left_col_width}),
 
         html.Div(
             [
                 html.H2(children='Data Columns',
                         style={'textAlign': 'center','height':H2_height,'marginBelow':H2_height_below_padding}),
-                html.Div(id="data-pane",style={'height':top_row_max_height-H2_height-5,'maxHeight':top_row_max_height-H2_height-5,'overflowY':'auto'}),
+                html.Div(id="data-pane",style={'height':top_row_max_height-H2_height-5,'maxHeight':top_row_max_height-H2_height-5,'overflowY':'auto'})
             ], style={"display": "inline-block", 'vertical-align': 'top', 'textAlign': 'left','marginRight': horizontal_pane_margin,'width': middle_col_width,'height':top_row_max_height,'maxHeight':top_row_max_height}), #,
 
         html.Div(
             [
                 html.H2(id='H2_3', children='Select Parameters',
                     style={'textAlign': 'center','marginBelow':H2_height_below_padding, 'height':H2_height}), #,'marginTop': 20
-                html.Div(id = "params-holder"),
+                html.Div(id = "params-holder")
             ],style ={"display": "inline-block",'vertical-align': 'top','textAlign': 'left','width':right_col_width,'height':top_row_max_height,'overflowY':'auto'}), #'maxHeight':top_row_max_height
         ],style={'height':top_row_max_height,"paddingTop":header_height}),html.Hr(), #style={'marginBottom': 60}
     html.Div(id='middle_row',children=[
-
+        html.Div(id='info-log-holder',style={'textAlign': 'center','vertical-align': 'top','width': left_col_width,'height': 100,"display": "inline-block"}),
         html.Div(
             [
-                html.Button('RUN',id="run-button",style=BUTTON_DEFAULT_STYLE),
+                html.Button('RUN',id="run-button",style={"font-weight": 900,"width":100,"height":100}),
                 dcc.Loading(id='run-message',children=[])
-            ], style={'textAlign': 'center','vertical-align': 'top'}),html.Hr(style={'marginBottom': 40})]), #,'marginLeft': 650
+            ], style={'textAlign': 'center','vertical-align': 'top',"width":middle_col_width,"display": "inline-block"}),
+        html.Div(id='debug-log-holder',style={'textAlign': 'center','vertical-align': 'top','width': right_col_width,'height': 100,"display": "inline-block"})
+        ],style={"display": "inline-block","width":"100%"}),html.Hr(style={'marginBottom': 40}), #,'marginLeft': 650
 html.Div(
         [
         html.Div(
@@ -247,6 +264,31 @@ html.Div(
         ],style={'vertical-align': 'top'}) #"display": "inline-block",
 
 ])
+
+#todo: probably works best to specifically capture tf logging (ask / see geepts), that might go to right side,
+#and then the custom more general logs could display in left side. If I can't get the tensorflow capture working,
+#maybe I can somehow inject a callback that write the epoch to the log output
+@callback(Output('info-log-holder',"children"),
+          Input("interval-component,'n_intervals"),
+          State("session-id", "data"))
+def update_info_log(n_intervals):
+
+    #read the log entries from the last second and populate
+    with open('session.logs.log','r') as log_file:
+        relevant_lines = [line for line in log_file]
+
+    return relevant_lines
+
+@callback(Output('info-log-holder', "children"),
+          Input("interval-component,'n_intervals"),
+          State("session-id", "data"))
+def update_info_debug(n_intervals):
+    # read the log entries from the last second and populate
+    with open('session.logs.log', 'r') as log_file:
+        relevant_lines = [line for line in log_file]
+
+    return relevant_lines
+
 
 @callback(
     Output('approaches_value_dict', 'data'),
@@ -844,9 +886,11 @@ def unpack_data_pane_values_extra(out_dict,children):
      State('dataset-select', 'value'),
      State('params-holder', 'children'),
      State("dataset_titles", "data"),
+     State("session-id", "data"),
     prevent_initial_call=True
  )
-def model_run_event(n_clicks,mode,pretrained_model,approach,columns,datasets,params_holder,dataset_titles):
+def model_run_event(n_clicks,mode,pretrained_model,approach,columns,datasets,params_holder,dataset_titles,session_id):
+
     pretrained_model = pretrained_model['value']
     approach = approach['value']
 
@@ -940,26 +984,85 @@ def model_run_event(n_clicks,mode,pretrained_model,approach,columns,datasets,par
                                        [html.Div(id='config-report-parameters',children ='Parameters: ')] + \
                                        [html.Div(id='config-report-parameters-' + a,children="- "+a+": "+str(b),style={'marginLeft': 15}) for (a,b) in config_dict["params_dict"].items()],style={'width': left_body_width})]
 
+
                 #this is where model will actually run
                 #if mode == "Training":
 
+                #CONSIDER CACHING DATASETS AND MODELS ON DISK FOR FASTER RETRIEVAL!
+
                 #just write it here to take advantage of variables, turn into fxns later as sensible.
 
+                #at some point, have this read from a cache on disk to speed up.
                 data = [pd.read_csv(io.BytesIO(STORAGE_CLIENT.bucket(DATA_BUCKET).blob(f"datasets/{i}").download_as_bytes())) for i in datasets]
+
+                if len(data)==1:
+                    data = data[0]
 
                 #load in model if needed.
                 if mode != "Training":
                     model, metadata = extract_model(STORAGE_CLIENT.bucket(DATA_BUCKET).blob(f"models/{pretrained_model}").download_as_bytes(),pretrained_model,upload_to_gcp=False)
                 else:
                     model, metadata = None,None
-                
-                #todo implement the ml stuff
-                #import code
-                #code.interact(local=dict(globals(), **locals()))
+                if mode != "Inference":
+                    #use params to populate splitvec is specified.
+                    if config_dict["params_dict"]['define-splits']==False:
+                        splitvec = None
+                    else:
+                        splitvec = config_dict["params_dict"]['splits-slider']
+                else:
+                    splitvec = [0,0]
 
-                #formatted_data = format_data(data)
+                total_bio_columns = 100 #expose later as a parameter, would need to only be available in 'training' mode, as fine tuning will have fixed architecture.
 
-                #data,artifacts,stats,dataset_titles = run_model(mode,approach,datasets,run_id)
+                if mode == 'Training':
+
+                    if 'parameters' in TRAINING_APPROACHES[approach]:
+                        supplied_params = {a:config_dict["params_dict"][a] for a in TRAINING_APPROACHES[approach]['parameters'] if a in config_dict["params_dict"]}
+
+                    #hash datasets prior to drop (include dropped columns as metadata.
+
+                    if isinstance(data,list):
+                        og_data_info = [hash_dataset(i) for i in data]
+                    else:
+                        og_data_info = hash_dataset(data)
+
+                    #drop before formatting so that metadata lines up.
+
+                    drop_cols = [i for i in data_pane_vals_dict if not data_pane_vals_dict[i]['selected'] and (
+                            i not in INFORMATIONAL and i not in RESPONSE_COLUMNS and i not in WN_STRING_NAME)]
+
+                    if isinstance(data,list):
+                        data = [i.drop(columns=drop_cols,errors="ignore") for i in data]
+                    else:
+                        data = data.drop(columns=drop_cols)
+
+                    formatted_data, format_metadata, _ = format_data(data,filter_CHOICE=config_dict["params_dict"]["filter"],scaler=config_dict["params_dict"]["scaling"], splitvec=splitvec)
+
+                    #remove any columns that were unselected in data pane.
+
+                    if approach == 'Basic model':
+                        #supplying the parameters, using default values
+                        model, training_outputs, additional_outputs = TrainingModeWithoutHyperband(
+                            data=formatted_data,
+                            bio_idx=format_metadata["datatype_indices"]["bio_indices"],
+                            wn_idx=format_metadata["datatype_indices"]["wn_indices"],
+                            total_bio_columns=total_bio_columns,
+                            **supplied_params
+                        )
+
+                    elif approach == 'hyperband tuning model':
+                        model, training_outputs, additional_outputs = TrainingModeWithHyperband(
+                            data=formatted_data,
+                            bio_idx=format_metadata["datatype_indices"]["bio_indices"],
+                            wn_idx=format_metadata["datatype_indices"]["wn_indices"],
+                            total_bio_columns=total_bio_columns,
+                            max_epochs=1 #make this into general training parameter.
+                        )
+
+                import code
+                code.interact(local=dict(globals(), **locals()))
+
+                #data,artifacts,stats,dataset_titles = run_model(
 
                 message = "Run Succeeded!"
 
@@ -1006,17 +1109,12 @@ def populate_split_selection(splits_val):
                                             dcc.RangeSlider(0, 100, 1, marks = {x*5:x*5 for x in range(20)}, value=[60, 80], id='splits-slider',
                                                             allowCross=False)]  if splits_val else None
 
-@callback(Output('mp-title',"children"),
-                Input('max-pooling', 'value')
-          )
-def populate_max_pooling(mp_val):
-
-    return f"Use maximum pooling: {mp_val}"
 @callback(#Output('params-select', 'options'),
                     #Output('params-select', 'value'),
                     Output('params-holder', 'children'),
                     Input('mode-select', 'value'),
-                    Input('approaches_value_dict', 'data')
+                    Input('approaches_value_dict', 'data'),
+    prevent_initial_call=True
 )
 def get_parameters(mode,approach):
     approach = approach['value']
@@ -1036,20 +1134,12 @@ def get_parameters(mode,approach):
 
             #training
             #this will largely be populated manually (hardcoded).
-            if mode == "Training": #was 'approach is not None', but right now having the fine tuning inherit previous parameters.
-                if approach == "Basic model":
-                    #return ["test"],[],dcc.Slider(0, 20, 5,value=10,id='test-conditional-component')
-                    params_holder_subcomponents.append(
-                            html.Div(id='model_params',children=[html.H4("Basic model"),
-                            filter_and_choice_params,
-                            basic_model_architecture_params if mode == 'Training' else None
-                            ],style = {'width':"50%"}))
-                            #html.Div(id='a_specific_param-name',style={'textAlign': 'left'},children="a_specific_param"),
-                            #dcc.Slider(0, 20, 5,value=10,id='a_specific_param')]))
-                elif approach == "hyperband tuning model":
-                    params_holder_subcomponents.append(html.Div(id='model_params',children=[html.H4('hyperband tuning model'),
-                                                                                            filter_and_choice_params
-                                                                                            ],style = {'width':"50%"})) #dcc.Checklist(id='checklist-params', options=["on_GPU","other thing"], value=[],inputStyle={"margin-right":checklist_pixel_padding_between})
+            if mode == "Training" and approach is not None: #was 'approach is not None', but right now having the fine tuning inherit previous parameters.
+                params_holder_subcomponents.append(
+                    html.Div(id='model_params',
+                         children=[html.H4(approach), filter_and_choice_params,
+                                  TRAINING_APPROACHES[approach]["dash_params"] if "dash_params" in TRAINING_APPROACHES[approach] else None], \
+                         style = {'width': "50%"}))
     elif mode == 'Inference':
 
             #use the current selection and model metadata dict to locate any model specific inference settings..?
