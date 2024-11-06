@@ -26,7 +26,7 @@ if "WEBAPP_RELEASE" not in os.environ:
 
 app = Dash(__name__, requests_pathname_prefix=f"/{os.getenv('APPNAME')}/", routes_pathname_prefix=f"/{os.getenv('APPNAME')}/",
                     external_stylesheets=external_stylesheets,
-                    use_pages=True)
+                    use_pages=True, update_title=None)
 
 #attempt to add some dynamic callbacks in here, since with app.callback (with app object available) I can use
 #lambda decorators to deal with bool variables.

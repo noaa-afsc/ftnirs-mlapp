@@ -1,3 +1,4 @@
+git describe --tags --abbrev=0
 git add .
 git commit -m "message" 
 git tag vx.x.x

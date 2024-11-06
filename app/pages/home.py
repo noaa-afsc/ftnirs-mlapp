@@ -12,6 +12,7 @@ import plotly.graph_objects as go
 from dash import dcc,html, dash_table,callback_context, callback,  Output, Input, State, DiskcacheManager #,State
 #from dash_extensions.enrich import Output, Input, State, DiskCacheManager #not sure if I need this yet. Maybe, these (diskcache) got rolled into vanilla diskcache?
 import dash_bootstrap_components as dbc
+from datetime import datetime,timedelta
 from dash.exceptions import PreventUpdate
 import pandas as pd
 import random as rand
@@ -33,6 +34,71 @@ from app_constant import app_header,header_height,encode_image
 from ftnirsml.code import loadModelWithMetadata, wnExtract, format_data, TrainingModeWithoutHyperband, TrainingModeWithHyperband,  hash_dataset
 #import zipfile
 import tempfile
+from tensorflow import get_logger
+import absl
+#testing
+import sys
+import logging
+from tensorflow.keras.callbacks import Callback as tk_callbacks
+
+tf_logger = get_logger()
+tf_logger.setLevel("INFO")
+os.environ["TF_CPP_MIN_LOG_LEVEL"]='0'
+
+absl.logging.set_verbosity("info")
+
+tf_logger.addHandler(logging.StreamHandler(sys.stdout))
+
+class EpochCounterCallback(tk_callbacks):
+
+    def __init__(self,session_id,logger,run_id):
+        super().__init__()
+        self.session_id = session_id
+        self.logger = logger
+        self.run_id = run_id
+        self.epoch_count = 0
+    def on_epoch_begin(self, epoch, logs=None):
+        self.epoch_count = self.epoch_count+1
+        self.logger.debug(f"{self.session_id} Current Epoch: {self.epoch_count} (rid: {self.run_id[:6]}...)")
+
+class CustomRotatingFileHandler(RotatingFileHandler):
+    def __init__(self, log_file_path,maxBytes,backupCount):
+        super().__init__(log_file_path,maxBytes,backupCount)
+        self.log_file_path = log_file_path
+        self.formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+        self.setFormatter(self.formatter)
+
+    def emit(self, record):
+        super().emit(record)
+        self.stream.flush()  # Ensure logs are written to the file immediately
+
+    def close(self):
+        if self.stream:
+            self.stream.close()
+        super().close()
+
+class LoggerWriter:
+    def __init__(self, logger, level, session_id):
+        self.logger = logger
+        self.level = level
+        self.buffer = ""
+        self.session_id = session_id
+    def write(self, message):
+        if message != '\n':  # Avoid logging empty newlines
+            self.buffer += message
+            if message.endswith('\n'):
+                formatted_message = f"{self.session_id} {self.buffer.strip()}"
+                self.logger.log(self.level, formatted_message)
+                self.buffer = ""
+    def flush(self):
+        if self.buffer:
+            formatted_message = f"{self.session_id} {self.buffer.strip()}"
+            self.logger.log(self.level, formatted_message)
+            self.buffer = ""
+def redirect_stdout_stderr(session_id, logger):
+    # Redirect sys.stdout and sys.stderr
+    sys.stdout = LoggerWriter(logger, logging.INFO,session_id)
+    sys.stderr = LoggerWriter(logger, logging.ERROR,session_id)
 
 load_dotenv('../tmp/.env')
 
@@ -43,14 +109,21 @@ dash.register_page(__name__, path='/',name = os.getenv("APPNAME")) #
 
 cache = diskcache.Cache("./cache")
 
-log_handler = RotatingFileHandler("session_logs.log",maxBytes=5*1024*1024)
+#set up info level manually triggered logger
+log_handler = RotatingFileHandler("session_logs.log",maxBytes=1*1024*1024)
 log_handler.setLevel(logging.DEBUG)
-formatter = logging.Formatter('% (asctime)s - %(levelname)s - %(message)s')
+formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
 log_handler.setFormatter(formatter)
 
-LOGGER = logging.getLogger('session_logger')
-LOGGER.setLevel(logging.DEBUG)
-LOGGER.addHandler(log_handler)
+LOGGER_MANUAL = logging.getLogger('manual_logger')
+LOGGER_MANUAL.setLevel(logging.DEBUG)
+LOGGER_MANUAL.addHandler(log_handler)
+
+#set up function capture stdout sterr logger
+REDIRECT_HANDLER = CustomRotatingFileHandler("fxn_logs.log",maxBytes=1*1024*1024,backupCount=1)
+REDIRECT_HANDLER.setLevel(logging.INFO)
+#logging.basicConfig(level=logging.INFO, handlers = [handler])
+
 
 #this should be an .env variable
 GCP_PROJ="ggn-nmfs-afscftnirs-dev-97fc"
@@ -180,7 +253,7 @@ layout = html.Div(id='parent', children=[
         ],style={"position":"fixed","top":header_height+15,"zIndex":999,'width':"100%"}),
     html.Div(id = 'toprow',children=[
         dcc.Interval(id='interval-component',interval=1*1000, n_intervals=0),
-        dcc.Store(id='session-id', storage_type='local', data=str(uuid.uuid4())), #see if this can be recoverable, potentially. s
+        dcc.Store(id='session-id', storage_type='session', data="session_init"), #see if this can be recoverable, potentially. s
         dcc.Store(id='params_dict', storage_type=APP_STORAGE_TYPE,data = {}),
         dcc.Store(id='dataset_titles', storage_type=APP_STORAGE_TYPE,data = {}),
         dcc.Store(id='data_metadata_dict', storage_type=APP_STORAGE_TYPE,data = {}),
@@ -236,13 +309,13 @@ layout = html.Div(id='parent', children=[
             ],style ={"display": "inline-block",'vertical-align': 'top','textAlign': 'left','width':right_col_width,'height':top_row_max_height,'overflowY':'auto'}), #'maxHeight':top_row_max_height
         ],style={'height':top_row_max_height,"paddingTop":header_height}),html.Hr(), #style={'marginBottom': 60}
     html.Div(id='middle_row',children=[
-        html.Div(id='info-log-holder',style={'textAlign': 'center','vertical-align': 'top','width': left_col_width,'height': 100,"display": "inline-block"}),
+        dcc.Markdown(id='manual-log-holder',style={'textAlign': 'left','vertical-align': 'top','width': left_col_width,'maxHeight':100,'height': 100,"display": "inline-block",'overflowY':'auto'}),
         html.Div(
             [
                 html.Button('RUN',id="run-button",style={"font-weight": 900,"width":100,"height":100}),
                 dcc.Loading(id='run-message',children=[])
             ], style={'textAlign': 'center','vertical-align': 'top',"width":middle_col_width,"display": "inline-block"}),
-        html.Div(id='debug-log-holder',style={'textAlign': 'center','vertical-align': 'top','width': right_col_width,'height': 100,"display": "inline-block"})
+        dcc.Markdown(id='redirect-log-holder',style={'textAlign': 'left','vertical-align': 'top','width': left_col_width,'maxHeight':100,'height': 100,"display": "inline-block",'overflowY':'auto'}),
         ],style={"display": "inline-block","width":"100%"}),html.Hr(style={'marginBottom': 40}), #,'marginLeft': 650
 html.Div(
         [
@@ -267,28 +340,38 @@ html.Div(
 
 #todo: probably works best to specifically capture tf logging (ask / see geepts), that might go to right side,
 #and then the custom more general logs could display in left side. If I can't get the tensorflow capture working,
-#maybe I can somehow inject a callback that write the epoch to the log output
-@callback(Output('info-log-holder',"children"),
-          Input("interval-component,'n_intervals"),
+#maybe I can somehow inject a callback that writes the epoch to the log output
+@callback(Output('manual-log-holder',"children"),
+          Output('redirect-log-holder', "children"),
+          Output("session-id", "data"),
+          Input("interval-component",'n_intervals'),
           State("session-id", "data"))
-def update_info_log(n_intervals):
+def update_logs(n_intervals,data):
+
+    #assign a new session a uuid4
+    if data=="session_init":
+        data = str(uuid.uuid4())
 
     #read the log entries from the last second and populate
-    with open('session.logs.log','r') as log_file:
-        relevant_lines = [line for line in log_file]
+    with open('session_logs.log','r') as log_file:
+        manual = [line[:19]+" "+line[70:] for line in log_file if (data in line and abs((datetime.strptime(line[0:19],"%Y-%m-%d %H:%M:%S")-datetime.now())) < timedelta(days=1))]
 
-    return relevant_lines
+    if len(manual) > 0:
+        manual = manual[-100:]
+        manual = list(reversed(manual))
+        manual = "\>"+"\n\>".join(manual) +"\n"
+    #todo: ideally, will read all data between each entry
+    with (open('fxn_logs.log', 'r') as log_file):
+        redirect =[line[:19]+" "+line[70:] for line in log_file if (data in line and abs((datetime.strptime(line[0:19],"%Y-%m-%d %H:%M:%S")-datetime.now())) < timedelta(days=1))]
 
-@callback(Output('info-log-holder', "children"),
-          Input("interval-component,'n_intervals"),
-          State("session-id", "data"))
-def update_info_debug(n_intervals):
-    # read the log entries from the last second and populate
-    with open('session.logs.log', 'r') as log_file:
-        relevant_lines = [line for line in log_file]
+        #import code
+        #code.interact(local=dict(globals(), **locals()))
+    if len(redirect)>0:
+        redirect = redirect[-100:]
+        redirect = list(reversed(redirect))
+        redirect = "\>" + "\n\>".join(redirect) + "\n"
 
-    return relevant_lines
-
+    return manual,redirect,data
 
 @callback(
     Output('approaches_value_dict', 'data'),
@@ -506,8 +589,7 @@ def present_columns(data_dict,model_dict,datasets,mode,pretrained_val,approach_v
     if pretrained_val != None:
         if mode == "Inference":
             if 'bio_columns' in model_dict[pretrained_val]:
-                #import code
-                #code.interact(local=dict(globals(), **locals()))
+
                 pretrained_include = [i for i in ast.literal_eval(model_dict[pretrained_val]['bio_columns'])]+[WN_STRING_NAME] #pipe in split to this, if specified in to be created and linked training parameters
                 #exclude wavs
                 if WN_STRING_NAME not in pretrained_include:
@@ -991,8 +1073,11 @@ def model_run_event(n_clicks,mode,pretrained_model,approach,columns,datasets,par
                 #CONSIDER CACHING DATASETS AND MODELS ON DISK FOR FASTER RETRIEVAL!
 
                 #just write it here to take advantage of variables, turn into fxns later as sensible.
-
+                #import code
+                #code.interact(local=dict(globals(), **locals()))
                 #at some point, have this read from a cache on disk to speed up.
+                LOGGER_MANUAL.info(f"{session_id} Reading data from cloud (rid: {run_id[:6]}...)")
+
                 data = [pd.read_csv(io.BytesIO(STORAGE_CLIENT.bucket(DATA_BUCKET).blob(f"datasets/{i}").download_as_bytes())) for i in datasets]
 
                 if len(data)==1:
@@ -1000,6 +1085,7 @@ def model_run_event(n_clicks,mode,pretrained_model,approach,columns,datasets,par
 
                 #load in model if needed.
                 if mode != "Training":
+                    LOGGER_MANUAL.info(f"{session_id} Reading model object from cloud (rid: {run_id[:6]}...)")
                     model, metadata = extract_model(STORAGE_CLIENT.bucket(DATA_BUCKET).blob(f"models/{pretrained_model}").download_as_bytes(),pretrained_model,upload_to_gcp=False)
                 else:
                     model, metadata = None,None
@@ -1036,9 +1122,21 @@ def model_run_event(n_clicks,mode,pretrained_model,approach,columns,datasets,par
                     else:
                         data = data.drop(columns=drop_cols)
 
+                    LOGGER_MANUAL.info(f"{session_id} Formatting data (rid: {run_id[:6]}...)")
+                    #I could make this fxn more verbose in the original codebase, and then could also capture its output?
                     formatted_data, format_metadata, _ = format_data(data,filter_CHOICE=config_dict["params_dict"]["filter"],scaler=config_dict["params_dict"]["scaling"], splitvec=splitvec)
 
                     #remove any columns that were unselected in data pane.
+
+                    LOGGER_MANUAL.info(f"{session_id} Starting model training (rid: {run_id[:6]}...)")
+
+                    #todo: doesn't seem like it's writing things like epoch? Fix...
+                    #think I should try just reconfiguring tf native logs to one place, should still be able to inject
+                    #the session_id...?
+                    #session_logger = logging.getLogger(f'{session_id}_logger')
+                    #session_logger.addHandler(REDIRECT_HANDLER)
+
+                    #redirect_stdout_stderr(session_id,session_logger)
 
                     if approach == 'Basic model':
                         #supplying the parameters, using default values
@@ -1047,7 +1145,8 @@ def model_run_event(n_clicks,mode,pretrained_model,approach,columns,datasets,par
                             bio_idx=format_metadata["datatype_indices"]["bio_indices"],
                             wn_idx=format_metadata["datatype_indices"]["wn_indices"],
                             total_bio_columns=total_bio_columns,
-                            **supplied_params
+                            **supplied_params,
+                            callbacks = [EpochCounterCallback(session_id,LOGGER_MANUAL,run_id)]
                         )
 
                     elif approach == 'hyperband tuning model':
@@ -1056,11 +1155,19 @@ def model_run_event(n_clicks,mode,pretrained_model,approach,columns,datasets,par
                             bio_idx=format_metadata["datatype_indices"]["bio_indices"],
                             wn_idx=format_metadata["datatype_indices"]["wn_indices"],
                             total_bio_columns=total_bio_columns,
-                            max_epochs=1 #make this into general training parameter.
+                            max_epochs=30, #, #make this into general training parameter.
+                            #callbacks=[EpochCounterCallback()]
+                            callbacks = [EpochCounterCallback(session_id,LOGGER_MANUAL,run_id)]
                         )
 
-                import code
-                code.interact(local=dict(globals(), **locals()))
+                    LOGGER_MANUAL.info(f"{session_id} Finished model training (rid: {run_id[:6]}...)")
+                    #import code
+                    #code.interact(local=dict(globals(), **locals()))
+
+                    #sys.stdout = sys.__stdout__
+                    #sys.stderr = sys.__stderr__
+
+
 
                 #data,artifacts,stats,dataset_titles = run_model(
 
