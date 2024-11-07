@@ -9,7 +9,7 @@ import dash
 import dash_daq as daq
 import plotly.graph_objects as go
 #from dash.dependencies import Input, Output
-from dash import dcc,html, dash_table,callback_context, callback,  Output, Input, State, DiskcacheManager #,State
+from dash import dcc,html, dash_table,callback_context, callback,  Output, Input, State #,State
 #from dash_extensions.enrich import Output, Input, State, DiskCacheManager #not sure if I need this yet. Maybe, these (diskcache) got rolled into vanilla diskcache?
 import dash_bootstrap_components as dbc
 from datetime import datetime,timedelta
@@ -41,14 +41,6 @@ import sys
 import logging
 from tensorflow.keras.callbacks import Callback as tk_callbacks
 
-tf_logger = get_logger()
-tf_logger.setLevel("INFO")
-os.environ["TF_CPP_MIN_LOG_LEVEL"]='0'
-
-absl.logging.set_verbosity("info")
-
-tf_logger.addHandler(logging.StreamHandler(sys.stdout))
-
 class EpochCounterCallback(tk_callbacks):
 
     def __init__(self,session_id,logger,run_id):
@@ -61,45 +53,6 @@ class EpochCounterCallback(tk_callbacks):
         self.epoch_count = self.epoch_count+1
         self.logger.debug(f"{self.session_id} Current Epoch: {self.epoch_count} (rid: {self.run_id[:6]}...)")
 
-class CustomRotatingFileHandler(RotatingFileHandler):
-    def __init__(self, log_file_path,maxBytes,backupCount):
-        super().__init__(log_file_path,maxBytes,backupCount)
-        self.log_file_path = log_file_path
-        self.formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
-        self.setFormatter(self.formatter)
-
-    def emit(self, record):
-        super().emit(record)
-        self.stream.flush()  # Ensure logs are written to the file immediately
-
-    def close(self):
-        if self.stream:
-            self.stream.close()
-        super().close()
-
-class LoggerWriter:
-    def __init__(self, logger, level, session_id):
-        self.logger = logger
-        self.level = level
-        self.buffer = ""
-        self.session_id = session_id
-    def write(self, message):
-        if message != '\n':  # Avoid logging empty newlines
-            self.buffer += message
-            if message.endswith('\n'):
-                formatted_message = f"{self.session_id} {self.buffer.strip()}"
-                self.logger.log(self.level, formatted_message)
-                self.buffer = ""
-    def flush(self):
-        if self.buffer:
-            formatted_message = f"{self.session_id} {self.buffer.strip()}"
-            self.logger.log(self.level, formatted_message)
-            self.buffer = ""
-def redirect_stdout_stderr(session_id, logger):
-    # Redirect sys.stdout and sys.stderr
-    sys.stdout = LoggerWriter(logger, logging.INFO,session_id)
-    sys.stderr = LoggerWriter(logger, logging.ERROR,session_id)
-
 load_dotenv('../tmp/.env')
 
 dash.register_page(__name__, path='/',name = os.getenv("APPNAME")) #
@@ -107,7 +60,8 @@ dash.register_page(__name__, path='/',name = os.getenv("APPNAME")) #
 #declare diskcache, to manage global variables/long running jobs in a way that
 #is multiple user and thread safe and fault tolerant.
 
-cache = diskcache.Cache("./cache")
+CACHE = diskcache.Cache("./cache")
+CACHE_EXPIRY = 1 #in days
 
 #set up info level manually triggered logger
 log_handler = RotatingFileHandler("session_logs.log",maxBytes=1*1024*1024)
@@ -119,12 +73,6 @@ LOGGER_MANUAL = logging.getLogger('manual_logger')
 LOGGER_MANUAL.setLevel(logging.DEBUG)
 LOGGER_MANUAL.addHandler(log_handler)
 
-#set up function capture stdout sterr logger
-REDIRECT_HANDLER = CustomRotatingFileHandler("fxn_logs.log",maxBytes=1*1024*1024,backupCount=1)
-REDIRECT_HANDLER.setLevel(logging.INFO)
-#logging.basicConfig(level=logging.INFO, handlers = [handler])
-
-
 #this should be an .env variable
 GCP_PROJ="ggn-nmfs-afscftnirs-dev-97fc"
 
@@ -132,8 +80,6 @@ GCP_PROJ="ggn-nmfs-afscftnirs-dev-97fc"
 STORAGE_CLIENT = storage.Client(project=GCP_PROJ)
 DATA_BUCKET = os.getenv("DATA_BUCKET")
 TMP_BUCKET = os.getenv("TMP_BUCKET")
-
-print(os.getenv("DATA_BUCKET"))
 
 def get_objs():
     objs = list(STORAGE_CLIENT.list_blobs(DATA_BUCKET))
@@ -354,18 +300,22 @@ def update_logs(n_intervals,data):
 
     #read the log entries from the last second and populate
     with open('session_logs.log','r') as log_file:
-        manual = [line[:19]+" "+line[70:] for line in log_file if (data in line and abs((datetime.strptime(line[0:19],"%Y-%m-%d %H:%M:%S")-datetime.now())) < timedelta(days=1))]
+
+        #import code
+        #code.interact(local=dict(globals(), **locals()))
+        manual = [line[:19]+" "+line[70:] for line in log_file if (data in line and line[26:30] == 'INFO' and abs((datetime.strptime(line[0:19],"%Y-%m-%d %H:%M:%S")-datetime.now())) < timedelta(days=1))]
 
     if len(manual) > 0:
         manual = manual[-100:]
         manual = list(reversed(manual))
         manual = "\>"+"\n\>".join(manual) +"\n"
     #todo: ideally, will read all data between each entry
-    with (open('fxn_logs.log', 'r') as log_file):
-        redirect =[line[:19]+" "+line[70:] for line in log_file if (data in line and abs((datetime.strptime(line[0:19],"%Y-%m-%d %H:%M:%S")-datetime.now())) < timedelta(days=1))]
-
+    with (open('session_logs.log', 'r') as log_file):
         #import code
         #code.interact(local=dict(globals(), **locals()))
+        redirect =[line[:19]+" "+line[70:] for line in log_file if (data in line and line[26:31] == 'DEBUG' and abs((datetime.strptime(line[0:19],"%Y-%m-%d %H:%M:%S")-datetime.now())) < timedelta(days=1))]
+
+
     if len(redirect)>0:
         redirect = redirect[-100:]
         redirect = list(reversed(redirect))
@@ -753,6 +703,7 @@ def update_data_metadata_dict(known_datasets,selected_datasets,click_trigger,dat
         elif blob.metadata != None:
             data_metadata_dict.update({k:blob.metadata})
         else:
+            #what this is supposed to do, is provide metadata if it wasn't uploaded through the app and autogenerated.
             data_bytes = blob.download_as_bytes()
             valid, message, _, metadata = data_check_datasets((k,"data:text/csv;base64,"+base64.b64encode(data_bytes).decode('utf-8')),load_data = False)
             if not valid:
@@ -969,9 +920,15 @@ def unpack_data_pane_values_extra(out_dict,children):
      State('params-holder', 'children'),
      State("dataset_titles", "data"),
      State("session-id", "data"),
-    prevent_initial_call=True
+     State('data_metadata_dict',"data"),
+     #running=[
+     #   (Output("run-button", "disabled"), True, False),
+     # ],
+    prevent_initial_call=True,
+    #background = True #todo this is returning pickle/diskcache error trying to run as background task. Confirmed that nothing in the callback python function itself is causing the error
+    #todo Next, try to run a simpler background task to see if the libraries and background are at least correctly configured.
  )
-def model_run_event(n_clicks,mode,pretrained_model,approach,columns,datasets,params_holder,dataset_titles,session_id):
+def model_run_event(n_clicks,mode,pretrained_model,approach,columns,datasets,params_holder,dataset_titles,session_id,data_metadata):
 
     pretrained_model = pretrained_model['value']
     approach = approach['value']
@@ -1076,9 +1033,38 @@ def model_run_event(n_clicks,mode,pretrained_model,approach,columns,datasets,par
                 #import code
                 #code.interact(local=dict(globals(), **locals()))
                 #at some point, have this read from a cache on disk to speed up.
-                LOGGER_MANUAL.info(f"{session_id} Reading data from cloud (rid: {run_id[:6]}...)")
 
-                data = [pd.read_csv(io.BytesIO(STORAGE_CLIENT.bucket(DATA_BUCKET).blob(f"datasets/{i}").download_as_bytes())) for i in datasets]
+                print("GOT TO HERE")
+
+                data = []
+                for m in datasets:
+                    cloud_download = False
+                    #use the metadata dict to get hash
+                    if 'data_hash' in data_metadata[m]:
+                        ds_hash = data_metadata[m]['data_hash']
+                        if ds_hash in CACHE:
+                            LOGGER_MANUAL.info(f"{session_id} Reading data {m} from local cache (rid: {run_id[:6]}...)")
+
+                            data_b64 = io.BytesIO(CACHE.get(data_metadata[m]['data_hash']))
+                        else:
+                            cloud_download = True
+                    else:
+                        cloud_download = True
+
+                    #if cloud_download == True:
+                    LOGGER_MANUAL.info(f"{session_id} Reading data {m} from cloud (rid: {run_id[:6]}...)")
+                    data_b64 = io.BytesIO(STORAGE_CLIENT.bucket(DATA_BUCKET).blob(f"datasets/{m}").download_as_bytes())#this should also be cached, if absent.
+                    blob = STORAGE_CLIENT.bucket(DATA_BUCKET).get_blob(f'datasets/{m}')
+                    blob.metadata['data_hash']
+                    CACHE.set(blob.metadata['data_hash'], base64.b64decode(data_b64), expire= CACHE_EXPIRY * 24 * 60 * 60)
+
+
+                    data.append(pd.read_csv(data_b64))
+
+                #data = [pd.read_csv(io.BytesIO(STORAGE_CLIENT.bucket(DATA_BUCKET).blob(f"datasets/{i}").download_as_bytes())) for i in datasets]
+
+                #import code
+                #code.interact(local=dict(globals(), **locals()))
 
                 if len(data)==1:
                     data = data[0]
@@ -1102,16 +1088,12 @@ def model_run_event(n_clicks,mode,pretrained_model,approach,columns,datasets,par
 
                 if mode == 'Training':
 
+                    print("GOT TO HERE2")
+
                     if 'parameters' in TRAINING_APPROACHES[approach]:
                         supplied_params = {a:config_dict["params_dict"][a] for a in TRAINING_APPROACHES[approach]['parameters'] if a in config_dict["params_dict"]}
 
-                    #hash datasets prior to drop (include dropped columns as metadata.
-
-                    if isinstance(data,list):
-                        og_data_info = [hash_dataset(i) for i in data]
-                    else:
-                        og_data_info = hash_dataset(data)
-
+                    LOGGER_MANUAL.info(f"{session_id} Removing dropped columns (rid: {run_id[:6]}...)")
                     #drop before formatting so that metadata lines up.
 
                     drop_cols = [i for i in data_pane_vals_dict if not data_pane_vals_dict[i]['selected'] and (
@@ -1163,10 +1145,6 @@ def model_run_event(n_clicks,mode,pretrained_model,approach,columns,datasets,par
                     LOGGER_MANUAL.info(f"{session_id} Finished model training (rid: {run_id[:6]}...)")
                     #import code
                     #code.interact(local=dict(globals(), **locals()))
-
-                    #sys.stdout = sys.__stdout__
-                    #sys.stderr = sys.__stderr__
-
 
 
                 #data,artifacts,stats,dataset_titles = run_model(
@@ -1327,15 +1305,21 @@ def datasets_to_gcp(filename,contents,data_metadata_dict):
             if valid:
                 print('uploading')
 
+                #todo: loop through metadata for existing datasets to make sure a dataset of the same hash doesn't already exist
+                #todo: or, display hash to user along with other ds metadata
+
                 blob = STORAGE_CLIENT.bucket(DATA_BUCKET).blob(f'datasets/{i[0]}')
 
                 blob.upload_from_string(data, 'text/csv')
+
+                #cache the dataset
+
+                CACHE.set(metadata['data_hash'],data,expire= CACHE_EXPIRY * 24 * 60 * 60) #two week expiry
 
                 attach_metadata_to_blob(metadata,blob)
 
                 #if filename is already in data_metadata_dict, clear it so that the contents will be properly
                 #pulled
-
 
                 if i[0] in data_metadata_dict:
                     print('clearing data_metadata_dict on reupload')
@@ -1410,12 +1394,6 @@ def models_to_gcp(filenames, contents):
 
                 model, metadata = extract_model(decoded,i[0],upload_to_gcp=True)
 
-                #tmpf = tempfile.NamedTemporaryFile(suffix=".keras",delete=False)
-                #model.save(tmpf.name) #think this will just overwrite the tempfile, but, does allow for name to be rng to avoid multiuser contention
-                #blob.upload_from_filename(tmpf.name)
-                #tmpf.close()
-                #os.unlink(tmpf.name)
-
                 #attach the full metadata file as a .pickle. Also, attach particular accessory metadata that will
                 #be needed later: all columns used in current model, wn attributes, description... parameter values?
                 if metadata is not None:
@@ -1475,12 +1453,22 @@ def data_check_datasets(file,load_data = True):
         # assemble dataset metadata object.
         # extract column names- interpret wav #s from other columns based on known rules.
 
-        # check that the dataset does not contain duplicated columns:
+        # get the dataset hash, which will be used to validate it as the same ds object and help improve performance with caching.
+        # I could do this within data check datasets, but that will mean that each dataset will be redowloaded
+        #pd.read_csv(io.BytesIO(STORAGE_CLIENT.bucket(DATA_BUCKET).blob(f"datasets/{i}").download_as_bytes()))
+        #for i in datasets]
+        #ds_hash = hash_dataset
 
+        #print("loaded")
+
+        #import code
+        #code.interact(local=dict(globals(), **locals()))
+
+        data = io.StringIO(decoded.decode('utf-8'))
+
+        # check that the dataset does not contain duplicated columns. pd automatically renames duplicate columns so cannot do this
         print('checking duplicate column names')
-
-        # avoid behavior of pandas to rename duplicate names
-        reader = csv.reader(io.StringIO(decoded.decode('utf-8')))
+        reader = csv.reader(data)
         columns = next(reader)
 
         # check that column names are unique
@@ -1488,7 +1476,10 @@ def data_check_datasets(file,load_data = True):
             valid = False
             message = message + "; - " + f"columns must be uniquely named"
 
-        print("loaded")
+        data_hash = hash_dataset(pd.read_csv(data))
+
+        # avoid behavior of pandas to rename duplicate names
+
 
         # along with parsing columns, rename the column metadata to 'standard' names. For example,
         # the identifer field, no matter what it is called, will be replaced by id. Have an visual indicator
@@ -1552,16 +1543,14 @@ def data_check_datasets(file,load_data = True):
         metadata = {"standard_columns": standard_cols,
                     "other_columns": other_cols, "wave_number_start_index": [wave_number_start_index],
                     "wave_number_end_index": [wave_number_end_index], "wave_number_min": [wave_number_min],
-                    "wave_number_max": [wave_number_max], "wave_number_step": [wave_number_step]}
+                    "wave_number_max": [wave_number_max], "wave_number_step": [wave_number_step],
+                    "data_hash":data_hash}
         if valid:
             return True,"",decoded if load_data else None,metadata #
         else:
             return False,message,None,None
 
 def data_check_models(file,load_model):
-
-    import code
-    code.interact(local=dict(globals(), **locals()))
 
     #unpack the zip into tempdir.
 

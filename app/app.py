@@ -1,8 +1,9 @@
-from dash import Dash,Output,Input
+from dash import Dash,Output,Input,DiskcacheManager
 import dash_bootstrap_components as dbc
 import os
 from dotenv import load_dotenv
 from ftnirsml.constants import TRAINING_APPROACHES
+import diskcache
 
 external_stylesheets = [dbc.themes.BOOTSTRAP,'https://codepen.io/chriddyp/pen/bWLwgP.css']
 
@@ -24,9 +25,12 @@ if "WEBAPP_RELEASE" not in os.environ:
     os.environ["WEBAPP_RELEASE"] = os.popen(f'git describe --tags {os.popen("git rev-list --tags --max-count=1 --first-parent").read()}').read()
     os.chdir(od)
 
+CACHE = diskcache.Cache("./cache2")
+background_callback_manager  = DiskcacheManager(CACHE)
+
 app = Dash(__name__, requests_pathname_prefix=f"/{os.getenv('APPNAME')}/", routes_pathname_prefix=f"/{os.getenv('APPNAME')}/",
                     external_stylesheets=external_stylesheets,
-                    use_pages=True, update_title=None)
+                    use_pages=True, update_title=None,background_callback_manager =background_callback_manager )
 
 #attempt to add some dynamic callbacks in here, since with app.callback (with app object available) I can use
 #lambda decorators to deal with bool variables.
