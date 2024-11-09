@@ -1,23 +1,17 @@
 import csv
 from collections import Counter
-import json
 import os
 import tarfile
 import io
 import ast
 import dash
 import dash_daq as daq
-import plotly.graph_objects as go
-#from dash.dependencies import Input, Output
-from dash import dcc,html, dash_table,callback_context, callback,  Output, Input, State #,State
-#from dash_extensions.enrich import Output, Input, State, DiskCacheManager #not sure if I need this yet. Maybe, these (diskcache) got rolled into vanilla diskcache?
+from dash import dcc,html, dash_table, callback,  Output, Input, State
 import dash_bootstrap_components as dbc
 from datetime import datetime,timedelta
-from dash.exceptions import PreventUpdate
 import pandas as pd
 import random as rand
 from google.cloud import storage
-import pickle
 import plotly.graph_objects as go
 import time
 import base64
@@ -27,17 +21,12 @@ from ftnirsml.constants import WN_MATCH,INFORMATIONAL,RESPONSE_COLUMNS,SPLITNAME
 import diskcache
 #safer and less bespoke than what I previously implemented.
 import uuid
-import logging
 from logging.handlers import RotatingFileHandler
 from dotenv import load_dotenv
 from app_constant import app_header,header_height,encode_image
 from ftnirsml.code import loadModelWithMetadata, wnExtract, format_data, TrainingModeWithoutHyperband, TrainingModeWithHyperband,  hash_dataset
 #import zipfile
 import tempfile
-from tensorflow import get_logger
-import absl
-#testing
-import sys
 import logging
 from tensorflow.keras.callbacks import Callback as tk_callbacks
 
@@ -108,13 +97,6 @@ refresh_button_width = 40
 #this will be supplied in callbacks to make the loading icon show up on button click
 ref_content = [html.Img(src=encode_image("./static/refresh-arrow.png"),style={"width":"20px","height":'auto'})]
 
-filter_and_choice_params = html.Div([
-html.Div("Filter choice:"),
-dcc.Dropdown(id='filter',options=['savgol','moving_average','gaussian','median','wavelet','fourier','pca'], value='savgol'),
-html.Div("Scaling choice:"),
-dcc.Dropdown(id='scaling',options=['minmax', 'standard', 'maxabs', 'robust', 'normalize'], value='minmax'),
-])
-
 #sort the params in TRAINING_APPROACHES, then add the dash stuff to the existing dict.
 #based on the number of bool variables, spin off some dynamic callback functions as needed.
 #        TRAINING_APPROACHES[i]['dash_parameters']=html.Div([]
@@ -130,11 +112,24 @@ for i in TRAINING_APPROACHES.keys():
                 obj.append(dcc.Input(id=m, type=TRAINING_APPROACHES[i]["parameters"][m]["data_type"], \
                                                          placeholder=str(TRAINING_APPROACHES[i]["parameters"][m]["data_type2"]).split(" ")[1][1:-2] + \
                                      " (default: " + str(TRAINING_APPROACHES[i]["parameters"][m]["default_value"])+")"))
-
+        print(f"added to training approaches for {i}")
         TRAINING_APPROACHES[i]["dash_params"]=html.Div(obj)
 
 #import code
 #code.interact(local=dict(globals(), **locals()))
+
+preprocessing_params = html.Div([
+html.Div(WN_STRING_NAME+" filter choice:"),
+dcc.Dropdown(id='wn-filter',options=['savgol','moving_average','gaussian','median','wavelet','fourier','pca'], value='savgol'),
+html.Div(WN_STRING_NAME+" scaling choice:"),
+dcc.Dropdown(id='wn-scaling',options=['minmax', 'standard', 'maxabs', 'robust', 'normalize'], value='minmax'),
+html.Div("Biological scaling choice:"),
+dcc.Dropdown(id='bio-scaling',options=['minmax', 'standard', 'maxabs', 'robust', 'normalize'], value='minmax'),
+html.Div(id='interp_status',children='Custom interpolation: False'),
+daq.ToggleSwitch(id='define-interp',value=False,style={"width":"50%"}),
+html.Div(id="interp-choice")
+])
+
 
 APP_STORAGE_TYPE = 'memory' #memory, session, local
 
@@ -251,7 +246,11 @@ layout = html.Div(id='parent', children=[
             [
                 html.H2(id='H2_3', children='Select Parameters',
                     style={'textAlign': 'center','marginBelow':H2_height_below_padding, 'height':H2_height}), #,'marginTop': 20
-                html.Div(id = "params-holder")
+                html.Div(id = "params-holder",children=[
+                    html.Div(id="preprocessing_params"),
+                    html.Div(id='mode_params',children=[]),
+                    html.Div(id="approach_params")
+                ]),
             ],style ={"display": "inline-block",'vertical-align': 'top','textAlign': 'left','width':right_col_width,'height':top_row_max_height,'overflowY':'auto'}), #'maxHeight':top_row_max_height
         ],style={'height':top_row_max_height,"paddingTop":header_height}),html.Hr(), #style={'marginBottom': 60}
     html.Div(id='middle_row',children=[
@@ -437,10 +436,12 @@ def present_approach_metadata(approach,mode):
         return None
 
 @callback(
+    Output('preprocessing_params', 'children'), #pretrained-present no allow duplicate
     Output('pretrained-present', 'children'),
     Input('pretrained_model_metadata_dict', "data"),
     Input("mode-select", "value"),
-    State("pretrained_value_dict", "data")
+    State("pretrained_value_dict", "data"),
+    prevent_initial_call = True
 )
 def present_pretrained_metadata(pretrained_model_metadata_dict,mode,pretrained):
 
@@ -449,18 +450,22 @@ def present_pretrained_metadata(pretrained_model_metadata_dict,mode,pretrained):
     if mode != "Training":
 
         if pretrained!= None:
+            description = pretrained_model_metadata_dict[pretrained].pop("description")
             pretrained_metadata = sorted(pretrained_model_metadata_dict[pretrained].items())
             obj = [html.Div(children=[html.Strong(str(a)), html.Span(f": {b}")],
                             style={'marginBottom': 10}) for a,b in pretrained_metadata]
-            return [html.Div(children=obj)] #html.H5("Pretrained Info:"),
+            print("DIDIDID")
+            return html.Div(children=obj),description #html.H5("Pretrained Info:"),  #[html.H4("Pretrained set parameters"),
         else:
             return None
 
     else:
         return None
 
+#todo: find out why (included in pretrained model) are sticking around! They are being retained but can't quite figure it out.
 @callback(
     Output('data-pane',"children"),
+    #Input('approaches-select', "children"),
     Input('data_metadata_dict', "data"),
     Input('pretrained_model_metadata_dict', "data"),
     State('dataset-select', 'value'),
@@ -474,7 +479,6 @@ def present_pretrained_metadata(pretrained_model_metadata_dict,mode,pretrained):
 def present_columns(data_dict,model_dict,datasets,mode,pretrained_val,approach_val,previous_selections): #(datasets,models,data_dict,model_dict):
 
     pretrained_val = pretrained_val['value']
-    approach_val = approach_val['value']
     #what do we need to know for columns for model run?
     #training:
     #1. what standard columns and other columns are being used (and their order)
@@ -519,11 +523,29 @@ def present_columns(data_dict,model_dict,datasets,mode,pretrained_val,approach_v
 
     #for training and inference, do not allow training for partial presence of wav numbers
     #equivalent = f"{(ds_count-len(wave_counts)+1)}/{ds_count}" if ds_count==0 else "NA"
-
+    #todo: since we have these values in here, would be good to show them on data pane under wn.
     wav_str = f"{WN_STRING_NAME} valid: {valid_waves}/{ds_count}, equivalent: {(ds_count-len(wave_counts)+1)}/{ds_count}"
 
-    standard_cols_counter = Counter([i for sublist in [ast.literal_eval(data_dict[i]['standard_columns']) for i in datasets] for i in sublist])
-    other_cols_counter = Counter([i for sublist in [ast.literal_eval(data_dict[i]['other_columns']) for i in datasets] for i in sublist])
+    if pretrained_val != None:
+
+        pretrained_include = [i.split(ONE_HOT_FLAG)[0] if ONE_HOT_FLAG in i else i for i in ast.literal_eval(model_dict[pretrained_val]['bio_columns'])] + [WN_STRING_NAME]
+        pretrained_include_std = set([l for l in pretrained_include if l in STANDARD_COLUMN_NAMES])
+        standard_cols_counter = Counter([i for sublist in [ast.literal_eval(data_dict[i]['standard_columns']) for i in datasets] for i in sublist])
+        standard_cols_zero_counts = [l for l in pretrained_include_std if l not in standard_cols_counter]
+        for l in standard_cols_zero_counts:
+            standard_excluded.append((str(l),f'{l} ({0}/{ds_count}) (included in pretrained model)',0))
+            
+        pretrained_include_oc = [l for l in pretrained_include if l not in STANDARD_COLUMN_NAMES and l != WN_STRING_NAME]
+        other_cols_counter = Counter(
+            [i for sublist in [ast.literal_eval(data_dict[i]['other_columns']) for i in datasets] for i in sublist])
+        other_cols_counter.update({a: 0 for a in [l for l in pretrained_include_oc if l not in standard_cols_counter]})
+        other_cols_zero_counts = [l for l in pretrained_include_oc if l not in other_cols_counter]
+        for l in other_cols_zero_counts:
+            other_excluded.append((str(l), f'{l} ({0}/{ds_count}) (included in pretrained model)', 0))
+
+    else:
+        standard_cols_counter = Counter([i for sublist in [ast.literal_eval(data_dict[i]['standard_columns']) for i in datasets] for i in sublist])
+        other_cols_counter = Counter([i for sublist in [ast.literal_eval(data_dict[i]['other_columns']) for i in datasets] for i in sublist])
 
     for i in INFORMATIONAL:
         if i in standard_cols_counter:
@@ -535,20 +557,19 @@ def present_columns(data_dict,model_dict,datasets,mode,pretrained_val,approach_v
             standard_excluded.append((str(i),f'{i} ({standard_cols_counter[i]}/{ds_count}) (response column)',standard_cols_counter[i]/ds_count))
             del standard_cols_counter[i]
 
-    wavs_exclude = False
     if pretrained_val != None:
+
+        # pipe in split to this, if specified in to be created and linked training parameters
         if mode == "Inference":
+            pretrained_exclude = [i for i in standard_cols_counter if i not in pretrained_include]
+            #import code
+            #code.interact(local=dict(globals(), **locals()))
             if 'bio_columns' in model_dict[pretrained_val]:
 
-                pretrained_include = [i for i in ast.literal_eval(model_dict[pretrained_val]['bio_columns'])]+[WN_STRING_NAME] #pipe in split to this, if specified in to be created and linked training parameters
-                #exclude wavs
-                if WN_STRING_NAME not in pretrained_include:
-                    wavs_exclude = True
-                    wav_str = wav_str + " (not used in pretrained model)"
                 #exclude standard
-                pretrained_exclude = [i for i in standard_cols_counter if i not in pretrained_include]
                 for i in pretrained_exclude:
-                    standard_excluded.append((str(i),f'{i} ({standard_cols_counter[i]}/{ds_count}) (not used in pretrained model)',standard_cols_counter[i]/ds_count))
+                    if i not in standard_excluded:
+                        standard_excluded.append((str(i),f'{i} ({standard_cols_counter[i]}/{ds_count}) (not used in pretrained model)',standard_cols_counter[i]/ds_count))
                     del standard_cols_counter[i]
 
                 #exclude other cols
@@ -556,31 +577,33 @@ def present_columns(data_dict,model_dict,datasets,mode,pretrained_val,approach_v
                 for i in pretrained_exclude:
                     other_excluded.append((str(i),f'{i} ({other_cols_counter[i]}/{ds_count}) (not used in pretrained model)',other_cols_counter[i]/ds_count))
                     del other_cols_counter[i]
-        elif mode == "Fine-tuning":
-            pass
-            #TODO: for already existing columns, mandate/suggest their inclusion.
 
-            #print(standard_excluded)
+    else:
+        pretrained_include = []
 
     #filter out id from standard columns display, where it never should be used in training.
-    standard_cols_counts_display = [(str(x[0]),f"{x[0]} ({x[1]}/{ds_count})",x[1]/ds_count) for x in sorted(standard_cols_counter.items(), key = lambda x: x[1], reverse = True)]
-    other_cols_counts_display = [(str(x[0]),f"{x[0]} ({x[1]}/{ds_count})",x[1]/ds_count) for x in sorted(other_cols_counter.items(), key = lambda x: x[1], reverse = True)]
+    standard_cols_counts_display = [(str(x[0]),f"{x[0]} ({x[1]}/{ds_count}) {'(one hot encoded)' if STANDARD_COLUMN_NAMES[x[0]]['data_type'] == 'categorical' else ''} {' (included in pretrained model)' if x[0] in pretrained_include and mode == 'Fine-tuning' else ''}",x[1]/ds_count) for x in sorted(standard_cols_counter.items(), key = lambda x: x[1], reverse = True)]
+    other_cols_counts_display = [(str(x[0]),f"{x[0]} ({x[1]}/{ds_count} {' (included in pretrained model)' if x[0] in pretrained_include and mode == 'Fine-tuning' else ''})",x[1]/ds_count) for x in sorted(other_cols_counter.items(), key = lambda x: x[1], reverse = True)]
 
-    #import code
-    #code.interact(local=dict(globals(), **locals()))
+    #wav_opts = [{"value":WN_STRING_NAME, "label":wav_str,"disabled":True if (valid_waves != ds_count or wavs_exclude) else False,
+    #             'extra':(valid_waves/ds_count,ds_count-len(wave_counts)+1/ds_count)}]
 
-    wav_opts = [{"value":WN_STRING_NAME, "label":wav_str,"disabled":True if (valid_waves != ds_count or wavs_exclude) else False,
+    wav_opts = [{"value":WN_STRING_NAME, "label":wav_str,"disabled":True,
                  'extra':(valid_waves/ds_count,ds_count-len(wave_counts)+1/ds_count)}]
 
     #consolidate all values, and apply previous selections (as relevant)
 
-    wav_val = [] if (valid_waves != ds_count or wavs_exclude) else previous_selections['wav'] #previous_selections['wav']
+    #disable, just mandate that it is true.
+    wav_val = [] if (valid_waves != ds_count) else previous_selections['wav'] #previous_selections['wav']
 
     std_opts = [{"value":x[0],"label":x[1],"disabled":False,'extra':x[2]} for x in standard_cols_counts_display]+[{"value":x[0],"label":x[1],"disabled":True,'extra':x[2]} for x in standard_excluded]
     std_val = [m for m in [x[0] for x in standard_cols_counts_display] if m in previous_selections['std']]
     oc_opts = [{"value":x[0],"label":x[1],"disabled":False,'extra':x[2]} for x in other_cols_counts_display]+[{"value":x[0],"label":x[1],"disabled":True,'extra':x[2]} for x in other_excluded]
     oc_val = [m for m in [x[0] for x in other_cols_counts_display] if m in previous_selections['oc']]
 
+    #if there are any that are included in pretrained, but not in the provided data
+    print(std_opts)
+    print(std_val)
 
     children = [html.Div(children=[html.H4("Wave numbers:"),dcc.Checklist(id='data-pane-wav-numbers',
                   options=wav_opts,  # [9:]if f"datasets/" == i[:8]
@@ -603,6 +626,8 @@ def present_columns(data_dict,model_dict,datasets,mode,pretrained_val,approach_v
 )
 def update_pretrained_metadata_dict(known_pretrained,selected_pretrained,pretrained_model_metadata_dict):
 
+
+
     if selected_pretrained == None:
         return pretrained_model_metadata_dict
     else:
@@ -621,6 +646,7 @@ def update_pretrained_metadata_dict(known_pretrained,selected_pretrained,pretrai
                 del pretrained_model_metadata_dict[k]
 
         uk_models = [k for k in selected_pretrained if k not in mmd_set]
+
         for k in uk_models:
             blob = STORAGE_CLIENT.bucket(DATA_BUCKET).get_blob(f'models/{k}')
             if blob == None:
@@ -812,6 +838,7 @@ def update_std_col(std,std_opts,prev):
 
     #remove if unselected
     for i in std_opts:
+        print(i)
         if i['value'] in prev['std'] and i['value'] not in std and not i['disabled']:
             prev['std'].remove(i['value'])
     #add if selected
@@ -930,6 +957,8 @@ def unpack_data_pane_values_extra(out_dict,children):
  )
 def model_run_event(n_clicks,mode,pretrained_model,approach,columns,datasets,params_holder,dataset_titles,session_id,data_metadata):
 
+
+
     pretrained_model = pretrained_model['value']
     approach = approach['value']
 
@@ -984,6 +1013,18 @@ def model_run_event(n_clicks,mode,pretrained_model,approach,columns,datasets,par
             any_error = True
             config_out_payload = []
 
+        if not data_pane_vals_dict[WN_STRING_NAME]['selected']:
+
+            if any_error:
+                message = message + f" & data error: no valid {WN_STRING_NAME} for operation"
+            else:
+                message = message + f"data error: no valid {WN_STRING_NAME} for operation"
+
+            ds_fail = True
+
+            any_error = True
+            config_out_payload = []
+
         #print(params_dict)
 
         run_id = ""  # set default so if it errors out, still can return outputs
@@ -1030,8 +1071,7 @@ def model_run_event(n_clicks,mode,pretrained_model,approach,columns,datasets,par
                 #CONSIDER CACHING DATASETS AND MODELS ON DISK FOR FASTER RETRIEVAL!
 
                 #just write it here to take advantage of variables, turn into fxns later as sensible.
-                #import code
-                #code.interact(local=dict(globals(), **locals()))
+
                 #at some point, have this read from a cache on disk to speed up.
 
                 print("GOT TO HERE")
@@ -1045,26 +1085,27 @@ def model_run_event(n_clicks,mode,pretrained_model,approach,columns,datasets,par
                         if ds_hash in CACHE:
                             LOGGER_MANUAL.info(f"{session_id} Reading data {m} from local cache (rid: {run_id[:6]}...)")
 
-                            data_b64 = io.BytesIO(CACHE.get(data_metadata[m]['data_hash']))
+                            data_b64 = CACHE.get(data_metadata[m]['data_hash'])
                         else:
                             cloud_download = True
                     else:
                         cloud_download = True
 
                     #if cloud_download == True:
-                    LOGGER_MANUAL.info(f"{session_id} Reading data {m} from cloud (rid: {run_id[:6]}...)")
-                    data_b64 = io.BytesIO(STORAGE_CLIENT.bucket(DATA_BUCKET).blob(f"datasets/{m}").download_as_bytes())#this should also be cached, if absent.
-                    blob = STORAGE_CLIENT.bucket(DATA_BUCKET).get_blob(f'datasets/{m}')
-                    blob.metadata['data_hash']
-                    CACHE.set(blob.metadata['data_hash'], base64.b64decode(data_b64), expire= CACHE_EXPIRY * 24 * 60 * 60)
+
+                    if cloud_download:
+                        LOGGER_MANUAL.info(f"{session_id} Reading data {m} from cloud (rid: {run_id[:6]}...)")
+                        data_b64 = STORAGE_CLIENT.bucket(DATA_BUCKET).blob(f"datasets/{m}").download_as_bytes()
+                        blob = STORAGE_CLIENT.bucket(DATA_BUCKET).get_blob(f'datasets/{m}')
+                        blob.metadata['data_hash']
+                        CACHE.set(blob.metadata['data_hash'], data_b64, expire= CACHE_EXPIRY * 24 * 60 * 60)
 
 
-                    data.append(pd.read_csv(data_b64))
+                    data.append(pd.read_csv(io.BytesIO(data_b64)))
 
                 #data = [pd.read_csv(io.BytesIO(STORAGE_CLIENT.bucket(DATA_BUCKET).blob(f"datasets/{i}").download_as_bytes())) for i in datasets]
 
-                #import code
-                #code.interact(local=dict(globals(), **locals()))
+
 
                 if len(data)==1:
                     data = data[0]
@@ -1093,7 +1134,16 @@ def model_run_event(n_clicks,mode,pretrained_model,approach,columns,datasets,par
                     if 'parameters' in TRAINING_APPROACHES[approach]:
                         supplied_params = {a:config_dict["params_dict"][a] for a in TRAINING_APPROACHES[approach]['parameters'] if a in config_dict["params_dict"]}
 
-                    LOGGER_MANUAL.info(f"{session_id} Removing dropped columns (rid: {run_id[:6]}...)")
+                    #if there is custom interpolation needed, extract it.
+                    if config_dict["params_dict"]['define-interp']:
+                        interp = [config_dict["params_dict"]["interp-min"],config_dict["params_dict"]["interp-max"],config_dict["params_dict"]["interp-step"]]
+                    else:
+                        interp = None
+
+                    #import code
+                    #code.interact(local=dict(globals(), **locals()))
+
+                    #LOGGER_MANUAL.info(f"{session_id} Removing dropped columns (rid: {run_id[:6]}...)")
                     #drop before formatting so that metadata lines up.
 
                     drop_cols = [i for i in data_pane_vals_dict if not data_pane_vals_dict[i]['selected'] and (
@@ -1104,21 +1154,13 @@ def model_run_event(n_clicks,mode,pretrained_model,approach,columns,datasets,par
                     else:
                         data = data.drop(columns=drop_cols)
 
-                    LOGGER_MANUAL.info(f"{session_id} Formatting data (rid: {run_id[:6]}...)")
-                    #I could make this fxn more verbose in the original codebase, and then could also capture its output?
-                    formatted_data, format_metadata, _ = format_data(data,filter_CHOICE=config_dict["params_dict"]["filter"],scaler=config_dict["params_dict"]["scaling"], splitvec=splitvec)
+                    LOGGER_MANUAL.info(f"{session_id} Preprocessing and formatting data (rid: {run_id[:6]}...)")
+
+                    formatted_data, format_metadata, _ = format_data(data,filter_CHOICE=config_dict["params_dict"]["wn-filter"],scaler=config_dict["params_dict"]["wn-scaling"], splitvec=splitvec, interp_minmaxstep=interp)
 
                     #remove any columns that were unselected in data pane.
 
                     LOGGER_MANUAL.info(f"{session_id} Starting model training (rid: {run_id[:6]}...)")
-
-                    #todo: doesn't seem like it's writing things like epoch? Fix...
-                    #think I should try just reconfiguring tf native logs to one place, should still be able to inject
-                    #the session_id...?
-                    #session_logger = logging.getLogger(f'{session_id}_logger')
-                    #session_logger.addHandler(REDIRECT_HANDLER)
-
-                    #redirect_stdout_stderr(session_id,session_logger)
 
                     if approach == 'Basic model':
                         #supplying the parameters, using default values
@@ -1143,9 +1185,6 @@ def model_run_event(n_clicks,mode,pretrained_model,approach,columns,datasets,par
                         )
 
                     LOGGER_MANUAL.info(f"{session_id} Finished model training (rid: {run_id[:6]}...)")
-                    #import code
-                    #code.interact(local=dict(globals(), **locals()))
-
 
                 #data,artifacts,stats,dataset_titles = run_model(
 
@@ -1188,56 +1227,80 @@ def populate_splits_fields(slider_val):
           )
 def populate_split_selection(splits_val):
 
-    #return f"Define splits: {splits_val}",[html.H5("| -- Train -- | -- Val -- | -- Test -- |"),dcc.RangeSlider(0, 100, 5, value=[60, 80], id='splits-slider', allowCross=False),html.Div("0% to the first value is the training split, the first value to the second value is the validation split, and the second value to 100% is test. Numbers represent percentages. Train and val must each be > 0%"),] if splits_val else None
-
     return f"Define splits: {splits_val}", [html.Div(id='train_val'),html.Div(id='val_val'),html.Div(id='test_val'),
                                             dcc.RangeSlider(0, 100, 1, marks = {x*5:x*5 for x in range(20)}, value=[60, 80], id='splits-slider',
                                                             allowCross=False)]  if splits_val else None
 
-@callback(#Output('params-select', 'options'),
-                    #Output('params-select', 'value'),
-                    Output('params-holder', 'children'),
+
+@callback(Output('interp_status',"children"),
+                Output('interp-choice',"children"),
+                Input('define-interp', 'value')
+          )
+def populate_interp_selection(interp_val):
+
+    return f"Custom interpolation: {interp_val}", [html.Div("Min:"),dcc.Input(id="interp-min", type="number", placeholder="3999"),
+                                            html.Div("Max:"),dcc.Input(id="interp-max", type="number", placeholder="11476"),
+                                            html.Div("Step:"),dcc.Input(id="interp-step", type="number", placeholder="8")] if interp_val else None
+
+
+@callback(
+                    Output('preprocessing_params', 'children',allow_duplicate=True),
                     Input('mode-select', 'value'),
                     Input('approaches_value_dict', 'data'),
+                    State('preprocessing_params', 'children'),
     prevent_initial_call=True
 )
-def get_parameters(mode,approach):
+def get_preprocess_parameters(mode,approach,previous):
+
     approach = approach['value']
 
-    params_holder_subcomponents = []
-
-    if mode == 'Training' or mode == 'Fine-tuning':
-
-            params_holder_subcomponents.append(html.Div(id='Training_params',children=[
-                html.H4("Training"),
-                html.Div("Seed:"),
-                dcc.Input(id="seed", type="number", placeholder="42"),
-                html.Div(id='splits_status',children='Define splits: False'),
-                daq.ToggleSwitch(id='define-splits',value=False,style={"width":"50%"}),
-                html.Div(id='splits_choice')
-            ]))
-
-            #training
-            #this will largely be populated manually (hardcoded).
-            if mode == "Training" and approach is not None: #was 'approach is not None', but right now having the fine tuning inherit previous parameters.
-                params_holder_subcomponents.append(
-                    html.Div(id='model_params',
-                         children=[html.H4(approach), filter_and_choice_params,
-                                  TRAINING_APPROACHES[approach]["dash_params"] if "dash_params" in TRAINING_APPROACHES[approach] else None], \
-                         style = {'width': "50%"}))
+    if mode == 'Training' and approach is not None:
+        return [html.H4("Preprocessing"), preprocessing_params]
     elif mode == 'Inference':
-
-            #use the current selection and model metadata dict to locate any model specific inference settings..?
-
-            params_holder_subcomponents.append(html.Div(id = 'Inference_params',children=[
-                html.H4("Inference") #,
-                #dcc.Checklist(id='checklist-params', options=["on_GPU"], value=[False],inputStyle={"margin-right":checklist_pixel_padding_between})
-            ]))
-
-    else:
         return None
+    else:
+        return previous
 
-    return params_holder_subcomponents
+@callback(
+                    Output('mode_params', 'children'),
+                    Input('mode-select', 'value'),
+                    State('mode_params', 'children'))
+def get_mode_parameters(mode,previous):
+
+    print('waaaah')
+    print(previous)
+
+    #if mode != "Inference" and previous != "Inference" and previous !=[]:
+    #    return previous
+    if mode != "Inference":
+        return [
+            html.H4("Training"),
+            html.Div("Seed:"),
+            dcc.Input(id="seed", type="number", placeholder="42"),
+            html.Div(id='splits_status', children='Define splits: False'),
+            daq.ToggleSwitch(id='define-splits', value=False, style={"width": "50%"}),
+            html.Div(id='splits_choice')
+        ]
+    else:
+        return [html.H4("Inference")]
+
+@callback(
+                    Output('approach_params', 'children'),
+                    Input('mode-select', 'value'),
+                    Input('approaches_value_dict', 'data'),
+                    #State("approach_params",'children'),
+    prevent_initial_call=True
+)
+def get_approach_parameters(mode,approach):
+    print(mode)
+    print(approach)
+
+    approach = approach['value']
+
+    if mode == 'Training' and approach is not None:
+        print("in here")
+        return  [html.H4(approach),TRAINING_APPROACHES[approach]["dash_params"] if "dash_params" in TRAINING_APPROACHES[approach] else None]
+
 
 
 
@@ -1326,8 +1389,7 @@ def datasets_to_gcp(filename,contents,data_metadata_dict):
                     del data_metadata_dict[i[0]]
 
                 message = ""
-                #import code
-                #code.interact(local=dict(globals(), **locals()))
+
 
             else:
                 valid = False
@@ -1400,8 +1462,7 @@ def models_to_gcp(filenames, contents):
 
                     if isinstance(metadata,list):
                         num_trainings = len(metadata)
-                        #import code
-                        #code.interact(local=dict(globals(), **locals()))
+
                         metadata = metadata[-1]
                     else:
                         num_trainings = 1
@@ -1580,8 +1641,6 @@ def data_check_models(file,load_model):
     return valid,message,decoded if load_model else None,metadata
 
     #check that it has the essential metadata fields
-
-#this is the  actual ML integration etc. placeholder
 
 def run_model(mode,model,datasets,run_id):
 
