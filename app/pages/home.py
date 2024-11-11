@@ -28,8 +28,7 @@ from ftnirsml.code import loadModelWithMetadata, wnExtract, format_data, Trainin
 #import zipfile
 import tempfile
 import logging
-from tensorflow.keras.callbacks import Callback as tk_callbacks
-
+from tensorflow.keras.callbacks import EarlyStopping, Callback as tk_callbacks
 class EpochCounterCallback(tk_callbacks):
 
     def __init__(self,session_id,logger,run_id):
@@ -37,10 +36,8 @@ class EpochCounterCallback(tk_callbacks):
         self.session_id = session_id
         self.logger = logger
         self.run_id = run_id
-        self.epoch_count = 0
     def on_epoch_begin(self, epoch, logs=None):
-        self.epoch_count = self.epoch_count+1
-        self.logger.debug(f"{self.session_id} Current Epoch: {self.epoch_count} (rid: {self.run_id[:6]}...)")
+        self.logger.debug(f"{self.session_id} Current Epoch: {epoch+1} (rid: {self.run_id[:6]}...)")
 
 load_dotenv('../tmp/.env')
 
@@ -69,6 +66,11 @@ GCP_PROJ="ggn-nmfs-afscftnirs-dev-97fc"
 STORAGE_CLIENT = storage.Client(project=GCP_PROJ)
 DATA_BUCKET = os.getenv("DATA_BUCKET")
 TMP_BUCKET = os.getenv("TMP_BUCKET")
+
+PRETRAINED_MODEL_METADATA_PARAMS = ["wave_number_min", "wave_number_max", "wave_number_step", "wn_filter", "wn_scaler",
+                                  "bio_scaler", "response_scaler"]
+
+
 
 def get_objs():
     objs = list(STORAGE_CLIENT.list_blobs(DATA_BUCKET))
@@ -115,23 +117,13 @@ for i in TRAINING_APPROACHES.keys():
         print(f"added to training approaches for {i}")
         TRAINING_APPROACHES[i]["dash_params"]=html.Div(obj)
 
-#import code
-#code.interact(local=dict(globals(), **locals()))
-
-preprocessing_params = html.Div([
-html.Div(WN_STRING_NAME+" filter choice:"),
-dcc.Dropdown(id='wn-filter',options=['savgol','moving_average','gaussian','median','wavelet','fourier','pca'], value='savgol'),
-html.Div(WN_STRING_NAME+" scaling choice:"),
-dcc.Dropdown(id='wn-scaling',options=['minmax', 'standard', 'maxabs', 'robust', 'normalize'], value='minmax'),
-html.Div("Biological scaling choice:"),
-dcc.Dropdown(id='bio-scaling',options=['minmax', 'standard', 'maxabs', 'robust', 'normalize'], value='minmax'),
-html.Div(id='interp_status',children='Custom interpolation: False'),
-daq.ToggleSwitch(id='define-interp',value=False,style={"width":"50%"}),
-html.Div(id="interp-choice")
-])
-
-
 APP_STORAGE_TYPE = 'memory' #memory, session, local
+
+WN_FILTER_DEFAULT,WN_SCALING_DEFAULT,BIO_SCALING_DEFAULT,RESPONSE_SCALING_DEFAULT = 'savgol','MinMaxScaler','MinMaxScaler','MinMaxScaler'
+
+interp_children_choose = [html.Div(id='interp_status',children='Custom interpolation: False'),
+                    daq.ToggleSwitch(id='define-interp',value=False,style={"width":"50%"}),
+                    html.Div(id="interp-choice")]
 
 layout = html.Div(id='parent', children=[
     app_header,
@@ -210,6 +202,8 @@ layout = html.Div(id='parent', children=[
             html.Div(id='datasets',children=[
                 html.H2(id='H2_1', children='Select Datasets',
                     style={'textAlign': 'center','marginBelow':H2_height_below_padding, 'height':H2_height}),  #'marginTop': 20}
+                #todo: maybe I can use the similar syntax like in data pane to add 'n' after the title- important info for using datasets. Or, make a seperate page for data and
+                #todo signal explorer.
                 dcc.Checklist(id='dataset-select',
                     options=get_datasets(), # [9:]if f"datasets/" == i[:8]
                     value=[], style={'maxHeight':200,'overflowY':'auto','width':left_body_width},inputStyle={"margin-right":checklist_pixel_padding_between }),
@@ -247,7 +241,16 @@ layout = html.Div(id='parent', children=[
                 html.H2(id='H2_3', children='Select Parameters',
                     style={'textAlign': 'center','marginBelow':H2_height_below_padding, 'height':H2_height}), #,'marginTop': 20
                 html.Div(id = "params-holder",children=[
-                    html.Div(id="preprocessing_params"),
+                    html.Div(id="preprocessing_params",children=[
+                    html.Div(WN_STRING_NAME+" filter choice:"),
+                    dcc.Dropdown(id='wn-filter',options=['savgol','moving_average','gaussian','median','wavelet','fourier','pca'], value=WN_FILTER_DEFAULT),
+                    html.Div(WN_STRING_NAME+" scaling choice:"),
+                    dcc.Dropdown(id='wn-scaling',options=['MinMaxScaler', 'StandardScaler', 'MaxAbsScaler', 'RobustScaler', 'Normalizer'], value=WN_SCALING_DEFAULT),
+                    html.Div("Biological scaling choice:"),
+                    dcc.Dropdown(id='bio-scaling',options=['MinMaxScaler', 'StandardScaler', 'MaxAbsScaler', 'RobustScaler', 'Normalizer'], value=BIO_SCALING_DEFAULT),
+                    html.Div("Response scaling choice:"),
+                    dcc.Dropdown(id='response-scaling',options=['MinMaxScaler', 'StandardScaler', 'MaxAbsScaler', 'RobustScaler'], value=RESPONSE_SCALING_DEFAULT),
+                    html.Div(id='interp_holder',children=interp_children_choose)],style={"width": "50%"}),
                     html.Div(id='mode_params',children=[]),
                     html.Div(id="approach_params")
                 ]),
@@ -283,9 +286,6 @@ html.Div(
 
 ])
 
-#todo: probably works best to specifically capture tf logging (ask / see geepts), that might go to right side,
-#and then the custom more general logs could display in left side. If I can't get the tensorflow capture working,
-#maybe I can somehow inject a callback that writes the epoch to the log output
 @callback(Output('manual-log-holder',"children"),
           Output('redirect-log-holder', "children"),
           Output("session-id", "data"),
@@ -308,7 +308,7 @@ def update_logs(n_intervals,data):
         manual = manual[-100:]
         manual = list(reversed(manual))
         manual = "\>"+"\n\>".join(manual) +"\n"
-    #todo: ideally, will read all data between each entry
+
     with (open('session_logs.log', 'r') as log_file):
         #import code
         #code.interact(local=dict(globals(), **locals()))
@@ -436,7 +436,15 @@ def present_approach_metadata(approach,mode):
         return None
 
 @callback(
-    Output('preprocessing_params', 'children'), #pretrained-present no allow duplicate
+    Output('wn-filter', 'value', allow_duplicate=True),
+    Output('wn-filter', 'disabled', allow_duplicate=True), #pretrained-present no allow duplicate
+    Output('wn-scaling', 'value', allow_duplicate=True),
+    Output('wn-scaling', 'disabled', allow_duplicate=True),
+    Output('bio-scaling', 'value', allow_duplicate=True),
+    Output('bio-scaling', 'disabled', allow_duplicate=True),
+    Output('response-scaling', 'value', allow_duplicate=True),
+    Output('response-scaling', 'disabled', allow_duplicate=True),
+    Output('interp_holder', 'children', allow_duplicate=True),
     Output('pretrained-present', 'children'),
     Input('pretrained_model_metadata_dict', "data"),
     Input("mode-select", "value"),
@@ -450,19 +458,35 @@ def present_pretrained_metadata(pretrained_model_metadata_dict,mode,pretrained):
     if mode != "Training":
 
         if pretrained!= None:
-            description = pretrained_model_metadata_dict[pretrained].pop("description")
-            pretrained_metadata = sorted(pretrained_model_metadata_dict[pretrained].items())
+            #description = pretrained_model_metadata_dict[pretrained].pop("description")
+
+            interp_children_preset = [html.Div(id='interp_status', children='Custom interpolation: True'),
+                                      daq.ToggleSwitch(id='define-interp', value=True, disabled=True),
+                                      html.Div("Min:"),
+                                      dcc.Input(id="interp-min", type="number", value = pretrained_model_metadata_dict[pretrained]['wave_number_min'],disabled=True),
+                                      html.Div("Max:"),
+                                      dcc.Input(id="interp-max", type="number", value = pretrained_model_metadata_dict[pretrained]['wave_number_max'],disabled=True),
+                                      html.Div("Step:"),
+                                      dcc.Input(id="interp-step", type="number", value = pretrained_model_metadata_dict[pretrained]['wave_number_step'],disabled=True)]
+
+            #pretrained_metadata = sorted(pretrained_model_metadata_dict[pretrained].items())
+            pretrained_metadata = sorted({l:pretrained_model_metadata_dict[pretrained][l] for l in pretrained_model_metadata_dict[pretrained] if l not in PRETRAINED_MODEL_METADATA_PARAMS}.items())
+
             obj = [html.Div(children=[html.Strong(str(a)), html.Span(f": {b}")],
-                            style={'marginBottom': 10}) for a,b in pretrained_metadata]
-            print("DIDIDID")
-            return html.Div(children=obj),description #html.H5("Pretrained Info:"),  #[html.H4("Pretrained set parameters"),
+                            style={'marginBottom': 10}) for a,b in pretrained_metadata] #[l for l in pretrained_metadata if l not in PRETRAINED_MODEL_METADATA_PARAMS]]
+            #import code
+            #code.interact(local=dict(globals(), **locals()))
+            return pretrained_model_metadata_dict[pretrained]["wn_filter"],True,\
+                   pretrained_model_metadata_dict[pretrained]["wn_scaler"],True,\
+                   pretrained_model_metadata_dict[pretrained]["bio_scaler"],True,\
+                   pretrained_model_metadata_dict[pretrained]["response_scaler"],True, \
+                   interp_children_preset,obj #html.H5("Pretrained Info:"),  #[html.H4("Pretrained set parameters"),
         else:
-            return None
+            return WN_FILTER_DEFAULT,False,WN_SCALING_DEFAULT,False,BIO_SCALING_DEFAULT,False,RESPONSE_SCALING_DEFAULT,False,interp_children_choose,None
 
     else:
-        return None
+        return WN_FILTER_DEFAULT,False,WN_SCALING_DEFAULT,False,BIO_SCALING_DEFAULT,False,RESPONSE_SCALING_DEFAULT,False,interp_children_choose,None
 
-#todo: find out why (included in pretrained model) are sticking around! They are being retained but can't quite figure it out.
 @callback(
     Output('data-pane',"children"),
     #Input('approaches-select', "children"),
@@ -479,6 +503,10 @@ def present_pretrained_metadata(pretrained_model_metadata_dict,mode,pretrained):
 def present_columns(data_dict,model_dict,datasets,mode,pretrained_val,approach_val,previous_selections): #(datasets,models,data_dict,model_dict):
 
     pretrained_val = pretrained_val['value']
+
+    #clear this out to make conditional logic cleaner within
+    if mode=='Training':
+        pretrained_val = None
     #what do we need to know for columns for model run?
     #training:
     #1. what standard columns and other columns are being used (and their order)
@@ -523,10 +551,10 @@ def present_columns(data_dict,model_dict,datasets,mode,pretrained_val,approach_v
 
     #for training and inference, do not allow training for partial presence of wav numbers
     #equivalent = f"{(ds_count-len(wave_counts)+1)}/{ds_count}" if ds_count==0 else "NA"
-    #todo: since we have these values in here, would be good to show them on data pane under wn.
     wav_str = f"{WN_STRING_NAME} valid: {valid_waves}/{ds_count}, equivalent: {(ds_count-len(wave_counts)+1)}/{ds_count}"
 
-    if pretrained_val != None:
+    print(f"mode:{mode} pretrained_val:{pretrained_val}")
+    if pretrained_val != None: #and mode is not 'Training':
 
         pretrained_include = [i.split(ONE_HOT_FLAG)[0] if ONE_HOT_FLAG in i else i for i in ast.literal_eval(model_dict[pretrained_val]['bio_columns'])] + [WN_STRING_NAME]
         pretrained_include_std = set([l for l in pretrained_include if l in STANDARD_COLUMN_NAMES])
@@ -534,7 +562,7 @@ def present_columns(data_dict,model_dict,datasets,mode,pretrained_val,approach_v
         standard_cols_zero_counts = [l for l in pretrained_include_std if l not in standard_cols_counter]
         for l in standard_cols_zero_counts:
             standard_excluded.append((str(l),f'{l} ({0}/{ds_count}) (included in pretrained model)',0))
-            
+
         pretrained_include_oc = [l for l in pretrained_include if l not in STANDARD_COLUMN_NAMES and l != WN_STRING_NAME]
         other_cols_counter = Counter(
             [i for sublist in [ast.literal_eval(data_dict[i]['other_columns']) for i in datasets] for i in sublist])
@@ -605,9 +633,14 @@ def present_columns(data_dict,model_dict,datasets,mode,pretrained_val,approach_v
     print(std_opts)
     print(std_val)
 
+    #import code
+    #code.interact(local=dict(globals(), **locals()))
+
+
     children = [html.Div(children=[html.H4("Wave numbers:"),dcc.Checklist(id='data-pane-wav-numbers',
                   options=wav_opts,  # [9:]if f"datasets/" == i[:8]
                   value=wav_val,inputStyle={"margin-right":checklist_pixel_padding_between})] if ds_count != 0 else None), #if len(standard_cols_counts_display)>0 or len(other_cols_counts_display)>0 else None
+            html.Div(id='wn_display_datasets',children=[html.Div(f"{m}: {round(float(ast.literal_eval(data_dict[m]['wave_number_min'])[0]),2)} - {round(float(ast.literal_eval(data_dict[m]['wave_number_max'])[0]),2)}; {round(float(ast.literal_eval(data_dict[m]['wave_number_step'])[0]),2)}") for m in datasets]),
             html.Div(children=[html.H4("Standard columns:"),dcc.Checklist(id='data-pane-columns-std',
                   options=std_opts,  # [9:]if f"datasets/" == i[:8]
                   value=std_val,inputStyle={"margin-right":checklist_pixel_padding_between})]) if (len(standard_cols_counts_display)+len(standard_excluded)) >0 else None,
@@ -625,8 +658,6 @@ def present_columns(data_dict,model_dict,datasets,mode,pretrained_val,approach_v
     prevent_initial_call=True
 )
 def update_pretrained_metadata_dict(known_pretrained,selected_pretrained,pretrained_model_metadata_dict):
-
-
 
     if selected_pretrained == None:
         return pretrained_model_metadata_dict
@@ -957,8 +988,6 @@ def unpack_data_pane_values_extra(out_dict,children):
  )
 def model_run_event(n_clicks,mode,pretrained_model,approach,columns,datasets,params_holder,dataset_titles,session_id,data_metadata):
 
-
-
     pretrained_model = pretrained_model['value']
     approach = approach['value']
 
@@ -1105,15 +1134,13 @@ def model_run_event(n_clicks,mode,pretrained_model,approach,columns,datasets,par
 
                 #data = [pd.read_csv(io.BytesIO(STORAGE_CLIENT.bucket(DATA_BUCKET).blob(f"datasets/{i}").download_as_bytes())) for i in datasets]
 
-
-
                 if len(data)==1:
                     data = data[0]
 
                 #load in model if needed.
                 if mode != "Training":
                     LOGGER_MANUAL.info(f"{session_id} Reading model object from cloud (rid: {run_id[:6]}...)")
-                    model, metadata = extract_model(STORAGE_CLIENT.bucket(DATA_BUCKET).blob(f"models/{pretrained_model}").download_as_bytes(),pretrained_model,upload_to_gcp=False)
+                    model, metadata,_ = extract_model(STORAGE_CLIENT.bucket(DATA_BUCKET).blob(f"models/{pretrained_model}").download_as_bytes(),pretrained_model,upload_to_gcp=False)
                 else:
                     model, metadata = None,None
                 if mode != "Inference":
@@ -1126,6 +1153,17 @@ def model_run_event(n_clicks,mode,pretrained_model,approach,columns,datasets,par
                     splitvec = [0,0]
 
                 total_bio_columns = 100 #expose later as a parameter, would need to only be available in 'training' mode, as fine tuning will have fixed architecture.
+
+                if mode != 'Inference':
+
+                    callbacks = [EpochCounterCallback(session_id, LOGGER_MANUAL, run_id)]
+
+                    if "define-early-stopping" in config_dict["params_dict"]:
+                        patience = config_dict["params_dict"].get("early-stopping-patience",4)
+                        metric = config_dict["params_dict"].get("early-stopping-metric","val_loss")
+                        callbacks.append(EarlyStopping(monitor=metric, patience=patience, verbose=1, restore_best_weights=True))
+                else:
+                    callbacks = []
 
                 if mode == 'Training':
 
@@ -1156,7 +1194,10 @@ def model_run_event(n_clicks,mode,pretrained_model,approach,columns,datasets,par
 
                     LOGGER_MANUAL.info(f"{session_id} Preprocessing and formatting data (rid: {run_id[:6]}...)")
 
-                    formatted_data, format_metadata, _ = format_data(data,filter_CHOICE=config_dict["params_dict"]["wn-filter"],scaler=config_dict["params_dict"]["wn-scaling"], splitvec=splitvec, interp_minmaxstep=interp)
+                    formatted_data, format_metadata, _ = format_data(data,filter_CHOICE=config_dict["params_dict"]["wn-filter"],scaler=config_dict["params_dict"]["bio-scaling"],\
+                                                                     wn_scaler=config_dict["params_dict"].get("wn-scaling"),\
+                                                                     response_scaler=config_dict["params_dict"].get("response-scaling"),\
+                                                                     splitvec=splitvec, interp_minmaxstep=interp)
 
                     #remove any columns that were unselected in data pane.
 
@@ -1169,8 +1210,10 @@ def model_run_event(n_clicks,mode,pretrained_model,approach,columns,datasets,par
                             bio_idx=format_metadata["datatype_indices"]["bio_indices"],
                             wn_idx=format_metadata["datatype_indices"]["wn_indices"],
                             total_bio_columns=total_bio_columns,
+                            epochs = config_dict["params_dict"].get('epoch',30),
                             **supplied_params,
-                            callbacks = [EpochCounterCallback(session_id,LOGGER_MANUAL,run_id)]
+                            callbacks = callbacks,
+                            seed_value = config_dict["params_dict"].get('seed')
                         )
 
                     elif approach == 'hyperband tuning model':
@@ -1179,12 +1222,21 @@ def model_run_event(n_clicks,mode,pretrained_model,approach,columns,datasets,par
                             bio_idx=format_metadata["datatype_indices"]["bio_indices"],
                             wn_idx=format_metadata["datatype_indices"]["wn_indices"],
                             total_bio_columns=total_bio_columns,
-                            max_epochs=30, #, #make this into general training parameter.
+                            epochs=config_dict["params_dict"].get('epoch', 30),
+                            max_epochs=config_dict["params_dict"].get('hyperband_max_epoch', TRAINING_APPROACHES[approach]["parameters"]["hyperband_max_epoch"]["default_value"]), #, #make this into general training parameter.
                             #callbacks=[EpochCounterCallback()]
-                            callbacks = [EpochCounterCallback(session_id,LOGGER_MANUAL,run_id)]
+                            callbacks = callbacks,
+                            seed_value = config_dict["params_dict"].get('seed')
                         )
 
                     LOGGER_MANUAL.info(f"{session_id} Finished model training (rid: {run_id[:6]}...)")
+
+                elif mode == 'Inference':
+                    pass
+                elif mode == 'Fine-tuning':
+                    pass
+                elif mode == 'Evaluation':
+                    pass
 
                 #data,artifacts,stats,dataset_titles = run_model(
 
@@ -1238,28 +1290,37 @@ def populate_split_selection(splits_val):
           )
 def populate_interp_selection(interp_val):
 
-    return f"Custom interpolation: {interp_val}", [html.Div("Min:"),dcc.Input(id="interp-min", type="number", placeholder="3999"),
-                                            html.Div("Max:"),dcc.Input(id="interp-max", type="number", placeholder="11476"),
-                                            html.Div("Step:"),dcc.Input(id="interp-step", type="number", placeholder="8")] if interp_val else None
+    return f"Custom interpolation: {interp_val}", [html.Div("Min:"),dcc.Input(id="interp-min", type="number", placeholder="float (ex. 3999.0)"),
+                                            html.Div("Max:"),dcc.Input(id="interp-max", type="number", placeholder="float (ex. 11476.0)"),
+                                            html.Div("Step:"),dcc.Input(id="interp-step", type="number", placeholder="float (ex. 8.0)")] if interp_val else None
+
+@callback(Output('early_stopping_status',"children"),
+                Output('early_stopping_choice',"children"),
+                Input('define-early-stopping', 'value')
+          )
+def populate_early_stopping_selection(early_stopping_val):
+
+    return f"Enable Early Stopping: {early_stopping_val}", [html.Div("Metric:"),dcc.Input(id="early-stopping-metric", type="text", placeholder="val_loss"),
+                                            html.Div("Max:"),dcc.Input(id="early-stopping-patience", type="number", placeholder="int (ex 4)")] if early_stopping_val else None
 
 
-@callback(
-                    Output('preprocessing_params', 'children',allow_duplicate=True),
-                    Input('mode-select', 'value'),
-                    Input('approaches_value_dict', 'data'),
-                    State('preprocessing_params', 'children'),
-    prevent_initial_call=True
-)
-def get_preprocess_parameters(mode,approach,previous):
-
-    approach = approach['value']
-
-    if mode == 'Training' and approach is not None:
-        return [html.H4("Preprocessing"), preprocessing_params]
-    elif mode == 'Inference':
-        return None
-    else:
-        return previous
+#@callback(
+#                    Output('preprocessing_params', 'children',allow_duplicate=True),
+#                    Input('mode-select', 'value'),
+#                    Input('approaches_value_dict', 'data'),
+#                    State('preprocessing_params', 'children'),
+#    prevent_initial_call=True
+#)
+#def get_preprocess_parameters(mode,approach,previous):
+#
+#    approach = approach['value']
+#
+#    if mode == 'Training' and approach is not None:
+#        return [html.H4("Preprocessing"), preprocessing_params]
+#    elif mode == 'Inference':
+#        return None
+#    else:
+#        return previous
 
 @callback(
                     Output('mode_params', 'children'),
@@ -1267,19 +1328,21 @@ def get_preprocess_parameters(mode,approach,previous):
                     State('mode_params', 'children'))
 def get_mode_parameters(mode,previous):
 
-    print('waaaah')
-    print(previous)
-
     #if mode != "Inference" and previous != "Inference" and previous !=[]:
     #    return previous
     if mode != "Inference":
         return [
             html.H4("Training"),
             html.Div("Seed:"),
-            dcc.Input(id="seed", type="number", placeholder="42"),
+            dcc.Input(id="seed", type="number", placeholder="int"),
             html.Div(id='splits_status', children='Define splits: False'),
             daq.ToggleSwitch(id='define-splits', value=False, style={"width": "50%"}),
-            html.Div(id='splits_choice')
+            html.Div(id='splits_choice'),
+            html.Div('Number of epochs'),
+            dcc.Input(id="epoch", type="number", placeholder="int (default: 30)"),
+            html.Div(id='early_stopping_status', children='Enable Early Stopping: False'),
+            daq.ToggleSwitch(id='define-early-stopping', value=False, style={"width": "50%"}),
+            html.Div(id='early_stopping_choice')
         ]
     else:
         return [html.H4("Inference")]
@@ -1292,17 +1355,12 @@ def get_mode_parameters(mode,previous):
     prevent_initial_call=True
 )
 def get_approach_parameters(mode,approach):
-    print(mode)
-    print(approach)
 
     approach = approach['value']
 
     if mode == 'Training' and approach is not None:
         print("in here")
         return  [html.H4(approach),TRAINING_APPROACHES[approach]["dash_params"] if "dash_params" in TRAINING_APPROACHES[approach] else None]
-
-
-
 
 @callback(
     Output('mode-select-output', 'children'),
@@ -1454,7 +1512,7 @@ def models_to_gcp(filenames, contents):
 
                 decoded = base64.b64decode(content_string)
 
-                model, metadata = extract_model(decoded,i[0],upload_to_gcp=True)
+                model, metadata,blob = extract_model(decoded,i[0],upload_to_gcp=True)
 
                 #attach the full metadata file as a .pickle. Also, attach particular accessory metadata that will
                 #be needed later: all columns used in current model, wn attributes, description... parameter values?
@@ -1469,10 +1527,22 @@ def models_to_gcp(filenames, contents):
 
                     _, _, wave_number_min, wave_number_step, wave_number_max, _ = wnExtract(metadata['model_col_names']["wn_columns_names_ordered"])
 
+                    #for scaler, iterate through column transformer until we hit wn**. prior to it, we will determine if there is a single scaler, or else will report 'mixed' for biological.
+                    #for wn
+
+                    wn_scaler = str(metadata['scaler'][0].named_transformers_[WN_STRING_NAME])[:-2]
+                    response_scaler = str(metadata['scaler'][0].named_transformers_[RESPONSE_COLUMNS[0]])[:-2]
+                    bio_scalers= [str(metadata['scaler'][0].named_transformers_[i])[:-2] for i in metadata['scaler'][0].named_transformers_ if i != WN_STRING_NAME or i != response_scaler]
+                    bio_scaler = bio_scalers[0] if all([i==bio_scalers[0] for i in bio_scalers]) else 'mixed'
+
+                    wn_filter = metadata['filter']
+
                     print('attaching metadata')
                     custom_metadata = {'num_trainings':num_trainings,'description':metadata['description'],"max_bio_columns":len(metadata['model_col_names']["bio_column_names_ordered_padded"]),\
                     'wave_number_min':wave_number_min,'wave_number_max':wave_number_max,"wave_number_step":wave_number_step,'bio_columns':metadata['model_col_names']["bio_column_names_ordered"],\
-                    }
+                    'wn_scaler':wn_scaler,'response_scaler':response_scaler,'bio_scaler':bio_scaler,'wn_filter':wn_filter}
+
+                    print(custom_metadata)
 
                     attach_metadata_to_blob(custom_metadata, blob)
                 else:
@@ -1493,9 +1563,10 @@ def extract_model(model_zip_bytes,model_zip_name,upload_to_gcp=False):
         temp_zip.write(model_zip_bytes)
         model, metadata = loadModelWithMetadata(temp_zip, model_zip_name[:-4])
         if upload_to_gcp:
-            blob.upload_from_filename(temp_zip.name)
+            blob.upload_from_string(model_zip_bytes)
+            #blob.upload_from_filename(temp_zip.name)
 
-    return model, metadata
+    return model, metadata, blob
 
 
 def data_check_datasets(file,load_data = True):
@@ -1522,8 +1593,7 @@ def data_check_datasets(file,load_data = True):
 
         #print("loaded")
 
-        #import code
-        #code.interact(local=dict(globals(), **locals()))
+
 
         data = io.StringIO(decoded.decode('utf-8'))
 
@@ -1536,8 +1606,8 @@ def data_check_datasets(file,load_data = True):
         if len(columns) != len(set(columns)):
             valid = False
             message = message + "; - " + f"columns must be uniquely named"
-
-        data_hash = hash_dataset(pd.read_csv(data))
+        dataset  =pd.read_csv(data)
+        data_hash = hash_dataset(dataset)
 
         # avoid behavior of pandas to rename duplicate names
 
@@ -1605,7 +1675,7 @@ def data_check_datasets(file,load_data = True):
                     "other_columns": other_cols, "wave_number_start_index": [wave_number_start_index],
                     "wave_number_end_index": [wave_number_end_index], "wave_number_min": [wave_number_min],
                     "wave_number_max": [wave_number_max], "wave_number_step": [wave_number_step],
-                    "data_hash":data_hash}
+                    "data_hash":data_hash,'data_rows':len(dataset)}
         if valid:
             return True,"",decoded if load_data else None,metadata #
         else:
