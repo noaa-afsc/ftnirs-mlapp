@@ -78,7 +78,9 @@ def get_objs():
 
 #should have this return elegible datasets as 1st tuple inelibile as 2nd tuple. (requires metadata check every call... )?
 def get_datasets():
-    return [i[9:] for i in get_objs() if "datasets/" == i[:9]]
+    datasets = [i for i in get_objs() if "datasets/" == i[:9]]
+
+    return [{"value": x[9:], "label": f"{x[9:]} - nrow: {STORAGE_CLIENT.bucket(DATA_BUCKET).get_blob(x).metadata['data_rows']}", "disabled": False} for x in datasets]
 
 def get_pretrained():
     return [i[7:] for i in get_objs() if "models/" == i[:7]]
@@ -737,13 +739,13 @@ def update_data_metadata_dict(known_datasets,selected_datasets,click_trigger,dat
     #if refresh is hit, triggers special behavior where we flush known datasets
     if click_trigger: #click_input> click_prev:
         print('DS refresh button was clicked!')
-        kd_set = set(get_datasets())
+        kd_set = set([i["value"] for i in get_datasets()])
         dmd_set = set()
         data_metadata_dict = {}
         increment = True
     else:
         increment = False
-        kd_set = set(known_datasets)
+        kd_set = set([i["value"] for i in known_datasets])
         dmd_set = set(data_metadata_dict)
 
     excess_metadata = dmd_set.difference(kd_set)
@@ -1158,7 +1160,7 @@ def model_run_event(n_clicks,mode,pretrained_model,approach,columns,datasets,par
 
                     callbacks = [EpochCounterCallback(session_id, LOGGER_MANUAL, run_id)]
 
-                    if "define-early-stopping" in config_dict["params_dict"]:
+                    if config_dict["params_dict"].get("define-early-stopping"):
                         patience = config_dict["params_dict"].get("early-stopping-patience",4)
                         metric = config_dict["params_dict"].get("early-stopping-metric","val_loss")
                         callbacks.append(EarlyStopping(monitor=metric, patience=patience, verbose=1, restore_best_weights=True))
