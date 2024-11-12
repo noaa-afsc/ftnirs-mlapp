@@ -1170,8 +1170,6 @@ def model_run_event(n_clicks,mode,pretrained_model,pretrained_model_metadata,app
                 if isinstance(data, list):
                     data = [i.drop(columns=drop_cols, errors="ignore") for i in data]
                 else:
-                    #import code
-                    #code.interact(local=dict(globals(), **locals()))
                     data = data.drop(columns=drop_cols, errors="ignore") #need to ignore errors as sometimes data_pane_vals_dict provides columns only present in pretrained model, not dataset.
 
 
@@ -1243,7 +1241,7 @@ def model_run_event(n_clicks,mode,pretrained_model,pretrained_model_metadata,app
                     LOGGER_MANUAL.info(f"{session_id} Preprocessing and formatting data (rid: {run_id[:6]}...)")
 
                     formatted_data, fd_outputs, _ = format_data(data, filter_CHOICE=metadata[-1]['filter'],
-                                                           scaler=metadata[-1]['scaler'], splitvec=[0, 0],
+                                                           scaler=metadata[-1]['scaler'], splitvec=[0, 0] if mode == "Inference" else splitvec,
                                                            interp_minmaxstep=interp,add_scale=True if mode == "Fine-tuning" else False)
 
                 if mode == "Inference":
@@ -1253,6 +1251,9 @@ def model_run_event(n_clicks,mode,pretrained_model,pretrained_model_metadata,app
                     LOGGER_MANUAL.info(f"{session_id} Finished generating predictions (rid: {run_id[:6]}...)")
 
                 elif mode == "Fine-tuning":
+
+                    #import code
+                    #code.interact(local=dict(globals(), **locals()))
 
                     LOGGER_MANUAL.info(f"{session_id} Fine-tuning model (rid: {run_id[:6]}...)")
 
