@@ -24,7 +24,7 @@ import uuid
 from logging.handlers import RotatingFileHandler
 from dotenv import load_dotenv
 from app_constant import app_header,header_height,encode_image
-from ftnirsml.code import loadModelWithMetadata, wnExtract, format_data, TrainingModeWithoutHyperband, TrainingModeWithHyperband,  hash_dataset
+from ftnirsml.code import loadModelWithMetadata, wnExtract, format_data, TrainingModeWithoutHyperband, TrainingModeWithHyperband,  hash_dataset, InferenceMode, TrainingModeFinetuning
 #import zipfile
 import tempfile
 import logging
@@ -631,10 +631,6 @@ def present_columns(data_dict,model_dict,datasets,mode,pretrained_val,approach_v
     oc_opts = [{"value":x[0],"label":x[1],"disabled":False,'extra':x[2]} for x in other_cols_counts_display]+[{"value":x[0],"label":x[1],"disabled":True,'extra':x[2]} for x in other_excluded]
     oc_val = [m for m in [x[0] for x in other_cols_counts_display] if m in previous_selections['oc']]
 
-    #if there are any that are included in pretrained, but not in the provided data
-    print(std_opts)
-    print(std_val)
-
     #import code
     #code.interact(local=dict(globals(), **locals()))
 
@@ -974,6 +970,7 @@ def unpack_data_pane_values_extra(out_dict,children):
      Input('run-button', 'n_clicks'),
      State('mode-select', 'value'),
      State('pretrained_value_dict', 'data'),
+     State('pretrained_model_metadata_dict', 'data'),
      State('approaches_value_dict', 'data'),
      State('data-pane', 'children'),
      State('dataset-select', 'value'),
@@ -988,7 +985,7 @@ def unpack_data_pane_values_extra(out_dict,children):
     #background = True #todo this is returning pickle/diskcache error trying to run as background task. Confirmed that nothing in the callback python function itself is causing the error
     #todo Next, try to run a simpler background task to see if the libraries and background are at least correctly configured.
  )
-def model_run_event(n_clicks,mode,pretrained_model,approach,columns,datasets,params_holder,dataset_titles,session_id,data_metadata):
+def model_run_event(n_clicks,mode,pretrained_model,pretrained_model_metadata,approach,columns,datasets,params_holder,dataset_titles,session_id,data_metadata):
 
     pretrained_model = pretrained_model['value']
     approach = approach['value']
@@ -1131,7 +1128,6 @@ def model_run_event(n_clicks,mode,pretrained_model,approach,columns,datasets,par
                         blob.metadata['data_hash']
                         CACHE.set(blob.metadata['data_hash'], data_b64, expire= CACHE_EXPIRY * 24 * 60 * 60)
 
-
                     data.append(pd.read_csv(io.BytesIO(data_b64)))
 
                 #data = [pd.read_csv(io.BytesIO(STORAGE_CLIENT.bucket(DATA_BUCKET).blob(f"datasets/{i}").download_as_bytes())) for i in datasets]
@@ -1139,12 +1135,6 @@ def model_run_event(n_clicks,mode,pretrained_model,approach,columns,datasets,par
                 if len(data)==1:
                     data = data[0]
 
-                #load in model if needed.
-                if mode != "Training":
-                    LOGGER_MANUAL.info(f"{session_id} Reading model object from cloud (rid: {run_id[:6]}...)")
-                    model, metadata,_ = extract_model(STORAGE_CLIENT.bucket(DATA_BUCKET).blob(f"models/{pretrained_model}").download_as_bytes(),pretrained_model,upload_to_gcp=False)
-                else:
-                    model, metadata = None,None
                 if mode != "Inference":
                     #use params to populate splitvec is specified.
                     if config_dict["params_dict"]['define-splits']==False:
@@ -1167,6 +1157,25 @@ def model_run_event(n_clicks,mode,pretrained_model,approach,columns,datasets,par
                 else:
                     callbacks = []
 
+                # if there is custom interpolation needed, extract it.
+                if config_dict["params_dict"]['define-interp']:
+                    interp = [float(config_dict["params_dict"]["interp-min"]), float(config_dict["params_dict"]["interp-max"]),
+                              float(config_dict["params_dict"]["interp-step"])]
+                else:
+                    interp = None
+
+                drop_cols = [i for i in data_pane_vals_dict if not data_pane_vals_dict[i]['selected'] and (
+                        i not in INFORMATIONAL and i not in RESPONSE_COLUMNS and i not in WN_STRING_NAME)]
+
+                if isinstance(data, list):
+                    data = [i.drop(columns=drop_cols, errors="ignore") for i in data]
+                else:
+                    #import code
+                    #code.interact(local=dict(globals(), **locals()))
+                    data = data.drop(columns=drop_cols, errors="ignore") #need to ignore errors as sometimes data_pane_vals_dict provides columns only present in pretrained model, not dataset.
+
+
+
                 if mode == 'Training':
 
                     print("GOT TO HERE2")
@@ -1174,25 +1183,11 @@ def model_run_event(n_clicks,mode,pretrained_model,approach,columns,datasets,par
                     if 'parameters' in TRAINING_APPROACHES[approach]:
                         supplied_params = {a:config_dict["params_dict"][a] for a in TRAINING_APPROACHES[approach]['parameters'] if a in config_dict["params_dict"]}
 
-                    #if there is custom interpolation needed, extract it.
-                    if config_dict["params_dict"]['define-interp']:
-                        interp = [config_dict["params_dict"]["interp-min"],config_dict["params_dict"]["interp-max"],config_dict["params_dict"]["interp-step"]]
-                    else:
-                        interp = None
-
                     #import code
                     #code.interact(local=dict(globals(), **locals()))
 
                     #LOGGER_MANUAL.info(f"{session_id} Removing dropped columns (rid: {run_id[:6]}...)")
                     #drop before formatting so that metadata lines up.
-
-                    drop_cols = [i for i in data_pane_vals_dict if not data_pane_vals_dict[i]['selected'] and (
-                            i not in INFORMATIONAL and i not in RESPONSE_COLUMNS and i not in WN_STRING_NAME)]
-
-                    if isinstance(data,list):
-                        data = [i.drop(columns=drop_cols,errors="ignore") for i in data]
-                    else:
-                        data = data.drop(columns=drop_cols)
 
                     LOGGER_MANUAL.info(f"{session_id} Preprocessing and formatting data (rid: {run_id[:6]}...)")
 
@@ -1226,18 +1221,52 @@ def model_run_event(n_clicks,mode,pretrained_model,approach,columns,datasets,par
                             total_bio_columns=total_bio_columns,
                             epochs=config_dict["params_dict"].get('epoch', 30),
                             max_epochs=config_dict["params_dict"].get('hyperband_max_epoch', TRAINING_APPROACHES[approach]["parameters"]["hyperband_max_epoch"]["default_value"]), #, #make this into general training parameter.
-                            #callbacks=[EpochCounterCallback()]
                             callbacks = callbacks,
                             seed_value = config_dict["params_dict"].get('seed')
                         )
 
                     LOGGER_MANUAL.info(f"{session_id} Finished model training (rid: {run_id[:6]}...)")
 
-                elif mode == 'Inference':
-                    pass
-                elif mode == 'Fine-tuning':
-                    pass
-                elif mode == 'Evaluation':
+                else:
+                    #for now, decided it's quick + easy to just download object from cloud each  time, can build in caching if that changes.
+                    LOGGER_MANUAL.info(f"{session_id} Reading model from cloud (rid: {run_id[:6]}...)")
+                    model, metadata, _ = extract_model(STORAGE_CLIENT.bucket(DATA_BUCKET).blob(f"models/{pretrained_model}").download_as_bytes(),pretrained_model, upload_to_gcp=False)
+                    blob = STORAGE_CLIENT.bucket(DATA_BUCKET).get_blob(f'models/{pretrained_model}')
+                    obj_metadata = blob.metadata
+
+                    #make metadata a list if it's not already for easier assumptions.
+
+                    if not isinstance(metadata,list):
+
+                        metadata = [metadata]
+
+                    LOGGER_MANUAL.info(f"{session_id} Preprocessing and formatting data (rid: {run_id[:6]}...)")
+
+                    formatted_data, fd_outputs, _ = format_data(data, filter_CHOICE=metadata[-1]['filter'],
+                                                           scaler=metadata[-1]['scaler'], splitvec=[0, 0],
+                                                           interp_minmaxstep=interp,add_scale=True if mode == "Fine-tuning" else False)
+
+                if mode == "Inference":
+
+                    LOGGER_MANUAL.info(f"{session_id} Generating predictions (rid: {run_id[:6]}...)")
+                    predictions = InferenceMode(model, formatted_data, metadata[-1]['scaler'],metadata[-1]['model_col_names'])
+                    LOGGER_MANUAL.info(f"{session_id} Finished generating predictions (rid: {run_id[:6]}...)")
+
+                elif mode == "Fine-tuning":
+
+                    LOGGER_MANUAL.info(f"{session_id} Fine-tuning model (rid: {run_id[:6]}...)")
+
+                    model2, training_outputs_finetuning, additional_outputs_finetuning = TrainingModeFinetuning(
+                        model=model, data=formatted_data,
+                        bio_idx=fd_outputs["datatype_indices"]["bio_indices"],
+                        names_ordered=metadata[-1]['model_col_names'],
+                        seed_value=config_dict["params_dict"].get('seed'),
+                        epochs=config_dict["params_dict"].get('epoch', 30),
+                        callbacks = callbacks,)
+
+                    LOGGER_MANUAL.info(f"{session_id} Finished fine-tuning model (rid: {run_id[:6]}...)")
+
+                elif mode == "Evaluation":
                     pass
 
                 #data,artifacts,stats,dataset_titles = run_model(
@@ -1547,6 +1576,7 @@ def models_to_gcp(filenames, contents):
                     print(custom_metadata)
 
                     attach_metadata_to_blob(custom_metadata, blob)
+
                 else:
                     attach_null_metadata(blob)
 
@@ -1663,8 +1693,7 @@ def data_check_datasets(file,load_data = True):
         standard_cols = []
         other_cols = []
 
-        #import code
-        #code.interact(local=dict(globals(), **locals()))
+
 
         for f in non_wave_columns:
             if f in STANDARD_COLUMN_NAMES:
