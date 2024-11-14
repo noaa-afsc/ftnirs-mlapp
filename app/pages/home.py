@@ -6,6 +6,7 @@ import io
 import ast
 import dash
 import dash_daq as daq
+import plotly.express as px
 from dash import dcc,html, dash_table, callback,  Output, Input, State
 import dash_bootstrap_components as dbc
 from datetime import datetime,timedelta
@@ -190,7 +191,6 @@ layout = html.Div(id='parent', children=[
         dcc.Interval(id='interval-component',interval=1*1000, n_intervals=0),
         dcc.Store(id='session-id', storage_type='session', data="session_init"), #see if this can be recoverable, potentially. s
         dcc.Store(id='params_dict', storage_type=APP_STORAGE_TYPE,data = {}),
-        dcc.Store(id='dataset_titles', storage_type=APP_STORAGE_TYPE,data = {}),
         dcc.Store(id='data_metadata_dict', storage_type=APP_STORAGE_TYPE,data = {}),
         dcc.Store(id='columns_dict', storage_type=APP_STORAGE_TYPE, data={"wav":[WN_STRING_NAME],'std':[i for i in STANDARD_COLUMN_NAMES],'oc':[]}),
         #dcc.Store(id='columns_dict', storage_type='memory', data={"wav":{WN_STRING_NAME},'std':{i for i in STANDARD_COLUMN_NAMES},'oc':set()}), #more effecient but doesn't work with framework
@@ -200,6 +200,10 @@ layout = html.Div(id='parent', children=[
         #dcc.Store(id='refresh-ds-count', storage_type='memory', data = 0),
         dcc.Store(id='run_id', storage_type=APP_STORAGE_TYPE),
         dcc.Store(id='dataset_select_last_clicked', storage_type=APP_STORAGE_TYPE,data = False),
+        dcc.Store(id='modelrun_stats', storage_type=APP_STORAGE_TYPE,data = {}),
+        dcc.Store(id='modelrun_data', storage_type=APP_STORAGE_TYPE,data = {}),
+        dcc.Store(id='model-name-and-description', storage_type=APP_STORAGE_TYPE,data = {}),
+        dcc.Store(id='config_table', storage_type=APP_STORAGE_TYPE, data={}),
             html.Div(id='left col top row',children=[
             html.Div(id='datasets',children=[
                 html.H2(id='H2_1', children='Select Datasets',
@@ -760,66 +764,78 @@ def update_data_metadata_dict(known_datasets,selected_datasets,click_trigger,dat
 @callback(
     Output('download-results', "data"),
     Input('btn-download-results', 'n_clicks'),
-    State('run-name','value'),
-    State('mode-select', 'value'),
     State('run_id', 'data'),
-    State('dataset_titles', 'data'),
-    State('params_dict', 'data')
+    State('run-name', 'value'),
+    State('model-name-and-description', 'data'),
+    State('params_dict', 'data'),
+    State("modelrun_stats", "data"),
+    State("modelrun_data", "data"),
+    State("config_table", "data")
 )
-def download_results(n_clicks,run_name,mode,run_id,dataset_titles,params_dict):
+def download_results(n_clicks,run_id,run_name,model_name_and_description,params_dict,stats,data,config):
 
     if n_clicks is not None:
 
         #make a tarball
-        #actually, I do want to use cloud storage instead of local for all files. Reason being is that the shared service
-        #will write to shared files. I could use RUN_ID, but then I'd also need to figure out a way to schedule flushing
-        #the folder versus just using the cloud storage lifecycle rule.
 
         tar_stream = io.BytesIO()
 
         with tarfile.open(fileobj=tar_stream, mode="w:gz") as tar:
             #stats
-            blob = STORAGE_CLIENT.bucket(TMP_BUCKET).blob(f"stats_{run_id}.csv")
+            #blob = STORAGE_CLIENT.bucket(TMP_BUCKET).blob(f"stats_{run_id}.csv")
 
-            obj = io.BytesIO(blob.download_as_bytes())
-            obj.seek(0)
+            #obj = io.BytesIO(blob.download_as_bytes())
+            #obj.seek(0)
+
+            obj = io.BytesIO(pd.DataFrame.from_dict(stats).to_csv(index=False).encode('utf-8'))
             info = tarfile.TarInfo(name = "stats.csv")
             info.size = len(obj.getvalue())
             tar.addfile(tarinfo = info,fileobj=obj)
 
             #config
-            blob = STORAGE_CLIENT.bucket(TMP_BUCKET).blob(f"config_{run_id}.yml")
+            #blob = STORAGE_CLIENT.bucket(TMP_BUCKET).blob(f"config_{run_id}.yml")
 
-            obj = io.BytesIO(blob.download_as_bytes())
-            obj.seek(0)
+            #obj = io.BytesIO(blob.download_as_bytes())
+            #obj.seek(0)
+            obj = io.BytesIO(pd.DataFrame.from_dict(config).to_csv(index=False).encode('utf-8'))
             info = tarfile.TarInfo(name="config.yml")
             info.size = len(obj.getvalue())
             tar.addfile(tarinfo=info, fileobj=obj)
 
             #add model object
             if params_dict["mode"] !="Inference":
-                blob = STORAGE_CLIENT.bucket(TMP_BUCKET).blob(f"trained_model_{run_id}.hd5")
+
+                print(model_name_and_description)
+                print(run_name)
+
+                #use the given name if available, otherwise use the unassigned name
+                if run_name!=None:
+                    model_name = model_name_and_description["model_name"]
+                    model_path = f'models/{model_name}'
+
+                    blob = STORAGE_CLIENT.bucket(DATA_BUCKET).blob(model_path)
+
+                else:
+                    model_name = f"trained_model_{run_id}.keras.zip"
+
+                    blob = STORAGE_CLIENT.bucket(TMP_BUCKET).blob(model_name)
 
                 obj = io.BytesIO(blob.download_as_bytes())
                 obj.seek(0)
-                info = tarfile.TarInfo(name=f"{[run_name if run_name is not None else run_id][0]}_trained_model.hd5")
+                info = tarfile.TarInfo(name=model_name)
                 info.size = len(obj.getvalue())
                 tar.addfile(tarinfo=info, fileobj=obj)
 
             #add data
 
-            for i in dataset_titles:
-                blob = STORAGE_CLIENT.bucket(TMP_BUCKET).blob(f"{i}_{run_id}.txt")
-
-                obj = io.BytesIO(blob.download_as_bytes())
-                obj.seek(0)
-                info = tarfile.TarInfo(name=f"{i}.txt")
-                info.size = len(obj.getvalue())
-                tar.addfile(tarinfo=info, fileobj=obj)
+            obj = io.BytesIO(pd.DataFrame.from_dict(data).to_csv(index=False).encode('utf-8'))
+            info = tarfile.TarInfo(name="data.csv")
+            info.size = len(obj.getvalue())
+            tar.addfile(tarinfo=info, fileobj=obj)
 
         tar_stream.seek(0)
 
-        return dcc.send_bytes(tar_stream.getvalue(),f"{run_id}_data.tar.gz")
+        return dcc.send_bytes(tar_stream.getvalue(),f"{run_id}_outputs.tar.gz")
 
 #test: function to export values from data_columns after change
 
@@ -945,8 +961,10 @@ def unpack_data_pane_values_extra(out_dict,children):
      Output('download-out', 'children'),
      Output('upload-out', 'children', allow_duplicate=True),
      Output("params_dict","data"),
-     Output("dataset_titles", "data"),
      Output("run_id", "data"),
+     Output("modelrun_stats", "data"),
+     Output("modelrun_data", "data"),
+     Output("config_table", "data"),
      Input('run-button', 'n_clicks'),
      State('mode-select', 'value'),
      State('pretrained_value_dict', 'data'),
@@ -955,7 +973,6 @@ def unpack_data_pane_values_extra(out_dict,children):
      State('data-pane', 'children'),
      State('dataset-select', 'value'),
      State('params-holder', 'children'),
-     State("dataset_titles", "data"),
      State("session-id", "data"),
      State('data_metadata_dict',"data"),
      #running=[
@@ -965,7 +982,7 @@ def unpack_data_pane_values_extra(out_dict,children):
     #background = True #todo this is returning pickle/diskcache error trying to run as background task. Confirmed that nothing in the callback python function itself is causing the error
     #todo Next, try to run a simpler background task to see if the libraries and background are at least correctly configured.
  )
-def model_run_event(n_clicks,mode,pretrained_model,pretrained_model_metadata,approach,columns,datasets,params_holder,dataset_titles,session_id,data_metadata):
+def model_run_event(n_clicks,mode,pretrained_model,pretrained_model_metadata,approach,columns,datasets,params_holder,session_id,data_metadata):
 
     pretrained_model = pretrained_model['value']
     approach = approach['value']
@@ -1053,10 +1070,11 @@ def model_run_event(n_clicks,mode,pretrained_model,pretrained_model_metadata,app
                 config_dict.update({"Training approach": approach})
                 config_dict.update({"Mode":mode})
 
-                config_table = pd.DataFrame(config_dict,index=[0])
+                config_table = config_dict
 
-                blob = STORAGE_CLIENT.bucket(TMP_BUCKET).blob(f'config_{run_id}.yml')
-                blob.upload_from_string(config_table.to_csv(), 'text/csv')
+                #don't do this, just save as dcc store.
+                #blob = STORAGE_CLIENT.bucket(TMP_BUCKET).blob(f'config_{run_id}.yml')
+                #blob.upload_from_string(config_table.to_csv(), 'text/csv')
 
                 config_out_children = [html.Div(id='config-body',children=[html.Div(id='run-name-block',children =[html.Div(id='run-name-prompt',children = "Run name:"),
                                         dcc.Input(id='run-name', type="text", placeholder="my_unique_pretrained_model_name",style={'textAlign': 'left', 'vertical-align': 'top','width':"150%"}),
@@ -1164,7 +1182,7 @@ def model_run_event(n_clicks,mode,pretrained_model,pretrained_model_metadata,app
 
                     LOGGER_MANUAL.info(f"{session_id} Preprocessing and formatting data (rid: {run_id[:6]}...)")
 
-                    formatted_data, format_metadata, _ = format_data(data,filter_CHOICE=config_dict["params_dict"]["wn-filter"],scaler=config_dict["params_dict"]["bio-scaling"],\
+                    formatted_data, metadata, data_hashes = format_data(data,filter_CHOICE=config_dict["params_dict"]["wn-filter"],scaler=config_dict["params_dict"]["bio-scaling"],\
                                                                      wn_scaler=config_dict["params_dict"].get("wn-scaling"),\
                                                                      response_scaler=config_dict["params_dict"].get("response-scaling"),\
                                                                      splitvec=splitvec, interp_minmaxstep=interp)
@@ -1177,8 +1195,8 @@ def model_run_event(n_clicks,mode,pretrained_model,pretrained_model_metadata,app
                         #supplying the parameters, using default values
                         model, training_outputs, additional_outputs = TrainingModeWithoutHyperband(
                             data=formatted_data,
-                            bio_idx=format_metadata["datatype_indices"]["bio_indices"],
-                            wn_idx=format_metadata["datatype_indices"]["wn_indices"],
+                            bio_idx=metadata["datatype_indices"]["bio_indices"],
+                            wn_idx=metadata["datatype_indices"]["wn_indices"],
                             total_bio_columns=total_bio_columns,
                             epochs = config_dict["params_dict"].get('epoch',30),
                             **supplied_params,
@@ -1189,14 +1207,21 @@ def model_run_event(n_clicks,mode,pretrained_model,pretrained_model_metadata,app
                     elif approach == 'hyperband tuning model':
                         model, training_outputs, additional_outputs = TrainingModeWithHyperband(
                             data=formatted_data,
-                            bio_idx=format_metadata["datatype_indices"]["bio_indices"],
-                            wn_idx=format_metadata["datatype_indices"]["wn_indices"],
+                            bio_idx=metadata["datatype_indices"]["bio_indices"],
+                            wn_idx=metadata["datatype_indices"]["wn_indices"],
                             total_bio_columns=total_bio_columns,
                             epochs=config_dict["params_dict"].get('epoch', 30),
                             max_epochs=config_dict["params_dict"].get('hyperband_max_epoch', TRAINING_APPROACHES[approach]["parameters"]["hyperband_max_epoch"]["default_value"]), #, #make this into general training parameter.
                             callbacks = callbacks,
                             seed_value = config_dict["params_dict"].get('seed')
                         )
+
+                    metadata.update({'model_col_names': training_outputs["model_col_names"],
+                                     'data_hashes': [{a: b} for (a, b) in zip(datasets, data_hashes)]})
+
+                    zipdest = packModelWithMetadata(model, f"model_{run_id}.keras.zip", metadata=metadata,
+                                                    previous_metadata=None,
+                                                    mandate_some_metadata_fields=False)
 
                     LOGGER_MANUAL.info(f"{session_id} Finished model training (rid: {run_id[:6]}...)")
 
@@ -1205,64 +1230,78 @@ def model_run_event(n_clicks,mode,pretrained_model,pretrained_model_metadata,app
                 else:
                     #for now, decided it's quick + easy to just download object from cloud each  time, can build in caching if that changes.
                     LOGGER_MANUAL.info(f"{session_id} Reading model from cloud (rid: {run_id[:6]}...)")
-                    model, metadata, _ = extract_model(STORAGE_CLIENT.bucket(DATA_BUCKET).blob(f"models/{pretrained_model}").download_as_bytes(),pretrained_model, upload_to_gcp=False)
+                    model, model_metadata, _ = extract_model(STORAGE_CLIENT.bucket(DATA_BUCKET).blob(f"models/{pretrained_model}").download_as_bytes(),pretrained_model, upload_to_gcp=False)
                     blob = STORAGE_CLIENT.bucket(DATA_BUCKET).get_blob(f'models/{pretrained_model}')
                     obj_metadata = blob.metadata
 
                     #make metadata a list if it's not already for easier assumptions.
 
-                    if not isinstance(metadata,list):
+                    if not isinstance(model_metadata,list):
 
-                        metadata = [metadata]
+                        model_metadata = [model_metadata]
 
                     LOGGER_MANUAL.info(f"{session_id} Preprocessing and formatting data (rid: {run_id[:6]}...)")
 
-                    formatted_data, fd_outputs, _ = format_data(data, filter_CHOICE=metadata[-1]['filter'],
-                                                           scaler=metadata[-1]['scaler'], splitvec=[0, 0] if mode == "Inference" else splitvec,
+                    #import code
+                    #code.interact(local=dict(globals(), **locals()))
+
+                    formatted_data, metadata, data_hashes = format_data(data, filter_CHOICE=model_metadata[-1]['filter'],
+                                                           scaler=model_metadata[-1]['scaler'], splitvec=[0, 0] if mode == "Inference" else splitvec,
                                                            interp_minmaxstep=interp,add_scale=True if mode == "Fine-tuning" else False)
 
                 if mode == "Inference":
 
                     LOGGER_MANUAL.info(f"{session_id} Generating predictions (rid: {run_id[:6]}...)")
-                    predictions = InferenceMode(model, formatted_data, metadata[-1]['scaler'],metadata[-1]['model_col_names'])
+                    predictions = InferenceMode(model, formatted_data, model_metadata[-1]['scaler'],model_metadata[-1]['model_col_names'])
                     LOGGER_MANUAL.info(f"{session_id} Finished generating predictions (rid: {run_id[:6]}...)")
+
+                    stats = {"TBA": True}
+                    data_out = {"predictions":predictions.flatten().tolist()}
+
+                    artifacts = [html.Div(id='figure-title', style={'textAlign': 'left'}, children="Age Prediction Histogram:"),dcc.Graph(id='figure',figure = px.histogram(pd.DataFrame(predictions.flatten().tolist(), columns=['Ages']),x="Ages"))]
+
 
                 elif mode == "Fine-tuning":
 
-                    #import code
-                    #code.interact(local=dict(globals(), **locals()))
-
                     LOGGER_MANUAL.info(f"{session_id} Fine-tuning model (rid: {run_id[:6]}...)")
 
-                    model2, training_outputs, additional_outputs = TrainingModeFinetuning(
+                    model, training_outputs, additional_outputs = TrainingModeFinetuning(
                         model=model, data=formatted_data,
-                        bio_idx=fd_outputs["datatype_indices"]["bio_indices"],
-                        names_ordered=metadata[-1]['model_col_names'],
+                        bio_idx=metadata["datatype_indices"]["bio_indices"],
+                        names_ordered=model_metadata[-1]['model_col_names'],
                         seed_value=config_dict["params_dict"].get('seed'),
                         epochs=config_dict["params_dict"].get('epoch', 30),
-                        callbacks = callbacks,)
+                        callbacks = callbacks)
+
+                    metadata.update({'model_col_names': training_outputs["model_col_names"],
+                                     'data_hashes': [{a: b} for (a, b) in zip(datasets, data_hashes)]})
+
+                    zipdest = packModelWithMetadata(model, f"model_{run_id}.keras.zip", metadata=metadata,
+                                                    previous_metadata=model_metadata,
+                                                    mandate_some_metadata_fields=False)
 
                     LOGGER_MANUAL.info(f"{session_id} Finished fine-tuning model (rid: {run_id[:6]}...)")
 
-                elif mode != "Inference":
+                if mode != "Inference":
 
-                    format_metadata.update({'model_col_names': training_outputs["model_col_names"]})
+                    #seemed inconvenient to get it into a format dash could serialize, so just upload to cloud, and redownload and unpack to add description metadata
+                    #(see how performance goes with that)
+                    #_____
+                    model_path = f"trained_model_{run_id}.keras.zip"
 
-                    zipdest = packModelWithMetadata(model, f"model_{run_id}.keras.zip", metadata=format_metadata,
-                                                    previous_metadata=None,
-                                                    mandate_some_metadata_fields=False)
-
-                    blob = STORAGE_CLIENT.bucket(TMP_BUCKET).blob(f"trained_model_{run_id}.keras.zip")
+                    blob = STORAGE_CLIENT.bucket(TMP_BUCKET).blob(model_path)
                     blob.upload_from_file(zipdest)
+                    #--------
 
                     #evalute against labeled data and produce stats
                     #todo- break apart the ML codebase logic to isolate this
+
+                    stats = {"r2_score":training_outputs["r2_score"]}
+                    artifacts = None #this should be the dash graph.
                     #import code
                     #code.interact(local=dict(globals(), **locals()))
-                    stats = {"r2_score":training_outputs["r2_score"]}
-                    artifacts = None
-                    #data = formatted_data
-                    dataset_titles = ["Data: R2"]
+                    data_out = formatted_data.to_dict("records")
+
                 else:
                     pass
                     #produce a list of all the  ages.
@@ -1277,6 +1316,9 @@ def model_run_event(n_clicks,mode,pretrained_model,pretrained_model_metadata,app
                 message = "Run Failed: error while processing algorithm"
                 config_out_payload = [html.Div(id='error-title',children="ERROR:"),html.Div(id='error message',children =[str(e)])]
                 processing_fail = True
+                stats = {}
+                artifacts = None
+                data_out = None
 
 
         download_out = [html.Div([html.Button("Download Results", id="btn-download-results"),
@@ -1288,10 +1330,14 @@ def model_run_event(n_clicks,mode,pretrained_model,pretrained_model_metadata,app
                         html.Div(
                         [
                             html.Div(id='stats-title',children="Run stats:"),
-                            dash_table.DataTable(stats), #stats.to_dict('records')
+                            dash_table.DataTable([stats]), #stats.to_dict('records')
                         ],style={'textAlign': 'left', 'vertical-align': 'top'}) if not (processing_fail or any_error) else ""])
 
-        return [processing_fail,ds_fail,model_fail,message,config_out_payload,stats_out,artifacts_out,download_out,html.Button("Upload Trained model", id="btn-upload-pretrained") if mode != "Inference" and not (processing_fail or any_error) else "",params_dict if not (processing_fail or any_error) else "",dataset_titles,run_id]
+        #print(f"modelpath:{model_path}")
+
+        return [processing_fail,ds_fail,model_fail,message,config_out_payload,stats_out,artifacts_out,download_out,\
+                html.Button("Upload Trained model", id="btn-upload-pretrained") if mode != "Inference" and not (processing_fail or any_error) else "",\
+                params_dict if not (processing_fail or any_error) else "",run_id,stats_out,data_out,config_table] #stats_out,data_out
 
 
 @callback(Output('train_val',"children"),
@@ -1490,6 +1536,7 @@ def datasets_to_gcp(filename,contents,data_metadata_dict):
 @callback(
     Output("model-upload-from-session-success", "is_open"),
     Output("model-upload-from-session-failure", "is_open"),
+    Output("model-name-and-description", "data"),
     Input('btn-upload-pretrained', 'n_clicks'),
     State('run-name',"value"),
     State('description', "value"),
@@ -1501,19 +1548,42 @@ def trained_model_publish(n_clicks,run_name,description,run_id):
 
     if n_clicks is not None:
         if run_name is None:
-            return False,True
+            return False,True,{}
         # TODO check for unique
         #TODO check for disallowed characters
         elif False:
             pass
 
-        blob = STORAGE_CLIENT.bucket(TMP_BUCKET).blob(f"trained_model_{run_id}.hd5")
+        #DL and unpack model and metadata.
+        tmp_model_path = f"trained_model_{run_id}.keras.zip"
+        tmp_model_name = f"model_{run_id}.keras.zip"
+        model_name = f"{run_name}.keras.zip"
+        model_path = f'models/{model_name}'
 
-        STORAGE_CLIENT.bucket(TMP_BUCKET).copy_blob(blob,STORAGE_CLIENT.bucket(DATA_BUCKET) , f'models/{run_name}.hd5')
 
-        #TODO: attach description and other metadata to published model object.
+        #import code
+        #code.interact(local=dict(globals(), **locals()))
 
-        return True,False
+        model, metadata, _ = extract_model(STORAGE_CLIENT.bucket(TMP_BUCKET).blob(tmp_model_path).download_as_bytes(), tmp_model_name,upload_to_gcp=False)
+
+        #append description
+        if isinstance(metadata,list):
+            metadata[-1].update({"description":description})
+        else:
+            metadata.update({"description": description})
+
+        zipdest = packModelWithMetadata(model, model_name, metadata=metadata,
+                                        previous_metadata=None,
+                                        mandate_some_metadata_fields=False)
+
+        #pack it back up and write it.
+
+        blob = STORAGE_CLIENT.bucket(DATA_BUCKET).blob(model_path)
+        blob.upload_from_file(zipdest)
+
+        attach_model_metadata_gcp_obj(metadata, blob)
+
+        return True,False,{"model_name":model_name,"description":description}
 
 @callback(
     Output("alert-model-success", "is_open"),
