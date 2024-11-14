@@ -24,7 +24,7 @@ import uuid
 from logging.handlers import RotatingFileHandler
 from dotenv import load_dotenv
 from app_constant import app_header,header_height,encode_image
-from ftnirsml.code import loadModelWithMetadata, wnExtract, format_data, TrainingModeWithoutHyperband, TrainingModeWithHyperband,  hash_dataset, InferenceMode, TrainingModeFinetuning
+from ftnirsml.code import loadModelWithMetadata, wnExtract, format_data, TrainingModeWithoutHyperband, TrainingModeWithHyperband,  hash_dataset, InferenceMode, TrainingModeFinetuning, packModelWithMetadata
 #import zipfile
 import tempfile
 import logging
@@ -237,11 +237,12 @@ layout = html.Div(id='parent', children=[
                         style={'textAlign': 'center','height':H2_height,'marginBelow':H2_height_below_padding}),
                 html.Div(id="data-pane",style={'height':top_row_max_height-H2_height-5,'maxHeight':top_row_max_height-H2_height-5,'overflowY':'auto'})
             ], style={"display": "inline-block", 'vertical-align': 'top', 'textAlign': 'left','marginRight': horizontal_pane_margin,'width': middle_col_width,'height':top_row_max_height,'maxHeight':top_row_max_height}), #,
-
-        html.Div(
-            [
+        #html.H2(id='H2_3', children='Select Parameters',
+        #                    style={'textAlign': 'center', 'marginTop': 20, 'height':H2_height,'marginBelow':H2_height_below_padding}),
+        html.Div(id='select parameters',
+            children=[
                 html.H2(id='H2_3', children='Select Parameters',
-                    style={'textAlign': 'center','marginBelow':H2_height_below_padding, 'height':H2_height}), #,'marginTop': 20
+                    style={'textAlign': 'center','marginBelow':H2_height, 'height':H2_height_below_padding}), #,'marginTop': 20
                 html.Div(id = "params-holder",children=[
                     html.Div(id="preprocessing_params",children=[
                     html.Div(WN_STRING_NAME+" filter choice:"),
@@ -255,8 +256,8 @@ layout = html.Div(id='parent', children=[
                     html.Div(id='interp_holder',children=interp_children_choose)],style={"width": "50%"}),
                     html.Div(id='mode_params',children=[]),
                     html.Div(id="approach_params")
-                ]),
-            ],style ={"display": "inline-block",'vertical-align': 'top','textAlign': 'left','width':right_col_width,'height':top_row_max_height,'overflowY':'auto'}), #'maxHeight':top_row_max_height
+                ],style={'height':top_row_max_height-H2_height-5,'maxHeight':top_row_max_height-H2_height-5,'overflowY':'auto'}),
+            ],style ={"display": "inline-block",'vertical-align': 'top','textAlign': 'left','width':right_col_width,'height':top_row_max_height}), #'maxHeight':top_row_max_height
         ],style={'height':top_row_max_height,"paddingTop":header_height}),html.Hr(), #style={'marginBottom': 60}
     html.Div(id='middle_row',children=[
         dcc.Markdown(id='manual-log-holder',style={'textAlign': 'left','vertical-align': 'top','width': left_col_width,'maxHeight':100,'height': 100,"display": "inline-block",'overflowY':'auto'}),
@@ -412,28 +413,7 @@ def update_approach_checklist(mode,pretrain_dict,pretrain_val,approach_val):
 
 
         return [html.H4("Training Approaches:", style={'textAlign': "left"}),
-            dcc.Dropdown(id='approaches-select', style={'width': 200}, options=[i for i in opts],value=approach_val["value"] if approach_val["value"] in opts else None), #[] if approach_val["value"]==None else approach_val["value"]
-            html.Div(id="approaches-present", style={'textAlign': 'left'})]
-    else:
-        return None
-@callback(
-    Output('approaches-present', 'children'),
-    Input("approaches-value_dict", "data"),
-    Input("mode-select", "value")
-)
-def present_approach_metadata(approach,mode):
-    approach = approach["value"]
-
-    hidden_metadata_keys = set({"finetunable"})
-
-    if mode != "Inference" and approach != None:
-
-        approach_metadata = TRAINING_APPROACHES[approach]
-
-        obj = [html.Div(children=[html.Strong(str(key)), html.Span(f": {approach_metadata[key]}")], style={'marginBottom': 10}) for key in approach_metadata if key not in hidden_metadata_keys]
-
-
-        return [html.Div(children=obj)] #html.H5("Approach Info:"),
+            dcc.Dropdown(id='approaches-select', style={'width': 200}, options=[i for i in opts],value=approach_val["value"] if approach_val["value"] in opts else None)] #[] if approach_val["value"]==None else approach_val["value"]
     else:
         return None
 
@@ -1172,17 +1152,12 @@ def model_run_event(n_clicks,mode,pretrained_model,pretrained_model_metadata,app
                 else:
                     data = data.drop(columns=drop_cols, errors="ignore") #need to ignore errors as sometimes data_pane_vals_dict provides columns only present in pretrained model, not dataset.
 
-
-
                 if mode == 'Training':
 
                     print("GOT TO HERE2")
 
                     if 'parameters' in TRAINING_APPROACHES[approach]:
                         supplied_params = {a:config_dict["params_dict"][a] for a in TRAINING_APPROACHES[approach]['parameters'] if a in config_dict["params_dict"]}
-
-                    #import code
-                    #code.interact(local=dict(globals(), **locals()))
 
                     #LOGGER_MANUAL.info(f"{session_id} Removing dropped columns (rid: {run_id[:6]}...)")
                     #drop before formatting so that metadata lines up.
@@ -1225,6 +1200,8 @@ def model_run_event(n_clicks,mode,pretrained_model,pretrained_model_metadata,app
 
                     LOGGER_MANUAL.info(f"{session_id} Finished model training (rid: {run_id[:6]}...)")
 
+                    #attach_model_metadata_gcp_obj(format_metadata,blob) #do this after model save, so that things like description will be applied also.
+
                 else:
                     #for now, decided it's quick + easy to just download object from cloud each  time, can build in caching if that changes.
                     LOGGER_MANUAL.info(f"{session_id} Reading model from cloud (rid: {run_id[:6]}...)")
@@ -1257,7 +1234,7 @@ def model_run_event(n_clicks,mode,pretrained_model,pretrained_model_metadata,app
 
                     LOGGER_MANUAL.info(f"{session_id} Fine-tuning model (rid: {run_id[:6]}...)")
 
-                    model2, training_outputs_finetuning, additional_outputs_finetuning = TrainingModeFinetuning(
+                    model2, training_outputs, additional_outputs = TrainingModeFinetuning(
                         model=model, data=formatted_data,
                         bio_idx=fd_outputs["datatype_indices"]["bio_indices"],
                         names_ordered=metadata[-1]['model_col_names'],
@@ -1267,8 +1244,28 @@ def model_run_event(n_clicks,mode,pretrained_model,pretrained_model_metadata,app
 
                     LOGGER_MANUAL.info(f"{session_id} Finished fine-tuning model (rid: {run_id[:6]}...)")
 
-                elif mode == "Evaluation":
+                elif mode != "Inference":
+
+                    format_metadata.update({'model_col_names': training_outputs["model_col_names"]})
+
+                    zipdest = packModelWithMetadata(model, f"model_{run_id}.keras.zip", metadata=format_metadata,
+                                                    previous_metadata=None,
+                                                    mandate_some_metadata_fields=False)
+
+                    blob = STORAGE_CLIENT.bucket(TMP_BUCKET).blob(f"trained_model_{run_id}.keras.zip")
+                    blob.upload_from_file(zipdest)
+
+                    #evalute against labeled data and produce stats
+                    #todo- break apart the ML codebase logic to isolate this
+                    #import code
+                    #code.interact(local=dict(globals(), **locals()))
+                    stats = {"r2_score":training_outputs["r2_score"]}
+                    artifacts = None
+                    #data = formatted_data
+                    dataset_titles = ["Data: R2"]
+                else:
                     pass
+                    #produce a list of all the  ages.
 
                 #data,artifacts,stats,dataset_titles = run_model(
 
@@ -1291,7 +1288,7 @@ def model_run_event(n_clicks,mode,pretrained_model,pretrained_model_metadata,app
                         html.Div(
                         [
                             html.Div(id='stats-title',children="Run stats:"),
-                            dash_table.DataTable(stats.to_dict('records')),
+                            dash_table.DataTable(stats), #stats.to_dict('records')
                         ],style={'textAlign': 'left', 'vertical-align': 'top'}) if not (processing_fail or any_error) else ""])
 
         return [processing_fail,ds_fail,model_fail,message,config_out_payload,stats_out,artifacts_out,download_out,html.Button("Upload Trained model", id="btn-upload-pretrained") if mode != "Inference" and not (processing_fail or any_error) else "",params_dict if not (processing_fail or any_error) else "",dataset_titles,run_id]
@@ -1367,8 +1364,8 @@ def get_mode_parameters(mode,previous):
             html.H4("Training"),
             html.Div("Seed:"),
             dcc.Input(id="seed", type="number", placeholder="int"),
-            html.Div(id='splits_status', children='Define splits: False'),
-            daq.ToggleSwitch(id='define-splits', value=False, style={"width": "50%"}),
+            html.Div(id='splits_status', children='Define splits: True'),
+            daq.ToggleSwitch(id='define-splits', value=True, style={"width": "50%"}),
             html.Div(id='splits_choice'),
             html.Div('Number of epochs'),
             dcc.Input(id="epoch", type="number", placeholder="int (default: 30)"),
@@ -1549,35 +1546,7 @@ def models_to_gcp(filenames, contents):
                 #attach the full metadata file as a .pickle. Also, attach particular accessory metadata that will
                 #be needed later: all columns used in current model, wn attributes, description... parameter values?
                 if metadata is not None:
-
-                    if isinstance(metadata,list):
-                        num_trainings = len(metadata)
-
-                        metadata = metadata[-1]
-                    else:
-                        num_trainings = 1
-
-                    _, _, wave_number_min, wave_number_step, wave_number_max, _ = wnExtract(metadata['model_col_names']["wn_columns_names_ordered"])
-
-                    #for scaler, iterate through column transformer until we hit wn**. prior to it, we will determine if there is a single scaler, or else will report 'mixed' for biological.
-                    #for wn
-
-                    wn_scaler = str(metadata['scaler'][0].named_transformers_[WN_STRING_NAME])[:-2]
-                    response_scaler = str(metadata['scaler'][0].named_transformers_[RESPONSE_COLUMNS[0]])[:-2]
-                    bio_scalers= [str(metadata['scaler'][0].named_transformers_[i])[:-2] for i in metadata['scaler'][0].named_transformers_ if i != WN_STRING_NAME or i != response_scaler]
-                    bio_scaler = bio_scalers[0] if all([i==bio_scalers[0] for i in bio_scalers]) else 'mixed'
-
-                    wn_filter = metadata['filter']
-
-                    print('attaching metadata')
-                    custom_metadata = {'num_trainings':num_trainings,'description':metadata['description'],"max_bio_columns":len(metadata['model_col_names']["bio_column_names_ordered_padded"]),\
-                    'wave_number_min':wave_number_min,'wave_number_max':wave_number_max,"wave_number_step":wave_number_step,'bio_columns':metadata['model_col_names']["bio_column_names_ordered"],\
-                    'wn_scaler':wn_scaler,'response_scaler':response_scaler,'bio_scaler':bio_scaler,'wn_filter':wn_filter}
-
-                    print(custom_metadata)
-
-                    attach_metadata_to_blob(custom_metadata, blob)
-
+                    attach_model_metadata_gcp_obj(metadata,blob)
                 else:
                     attach_null_metadata(blob)
 
@@ -1587,6 +1556,37 @@ def models_to_gcp(filenames, contents):
         return success, not success, message
     else:
         return False, False, None
+
+def attach_model_metadata_gcp_obj(metadata,blob):
+    if isinstance(metadata, list):
+        num_trainings = len(metadata)
+
+        metadata = metadata[-1]
+    else:
+        num_trainings = 1
+
+    _, _, wave_number_min, wave_number_step, wave_number_max, _ = wnExtract(metadata['model_col_names']["wn_columns_names_ordered"])
+
+    # for scaler, iterate through column transformer until we hit wn**. prior to it, we will determine if there is a single scaler, or else will report 'mixed' for biological.
+    # for wn
+
+    wn_scaler = str(metadata['scaler'][0].named_transformers_[WN_STRING_NAME])[:-2]
+    response_scaler = str(metadata['scaler'][0].named_transformers_[RESPONSE_COLUMNS[0]])[:-2]
+    bio_scalers = [str(metadata['scaler'][0].named_transformers_[i])[:-2] for i in
+                   metadata['scaler'][0].named_transformers_ if i != WN_STRING_NAME or i != response_scaler]
+    bio_scaler = bio_scalers[0] if all([i == bio_scalers[0] for i in bio_scalers]) else 'mixed'
+
+    wn_filter = metadata['filter']
+
+    custom_metadata = {'num_trainings': num_trainings, 'description': metadata['description'],
+                       "max_bio_columns": len(metadata['model_col_names']["bio_column_names_ordered_padded"]), \
+                       'wave_number_min': wave_number_min, 'wave_number_max': wave_number_max,
+                       "wave_number_step": wave_number_step,
+                       'bio_columns': metadata['model_col_names']["bio_column_names_ordered"], \
+                       'wn_scaler': wn_scaler, 'response_scaler': response_scaler, 'bio_scaler': bio_scaler,
+                       'wn_filter': wn_filter}
+
+    attach_metadata_to_blob(custom_metadata, blob)
 
 def extract_model(model_zip_bytes,model_zip_name,upload_to_gcp=False):
 
