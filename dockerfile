@@ -8,7 +8,7 @@ COPY requirements.txt .
 
 RUN pip install --no-cache-dir --upgrade -r requirements.txt
 
-RUN pip install git+https://github.com/DanWoodrichNOAA/ftnirs-ml-codebase.git@${MLCODE_RELEASE}
+RUN pip install git+"https://github.com/DanWoodrichNOAA/ftnirs-ml-codebase.git@${MLCODE_RELEASE}"
 
 COPY . . 
 
