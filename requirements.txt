@@ -12,6 +12,7 @@ dash-daq==0.5.0
 dash-html-components==2.0.0
 dash-table==5.0.0
 diskcache==5.6.3
+dash[diskcache]
 docutils==0.20.1
 Flask==3.0.3
 google-api-core==2.18.0
