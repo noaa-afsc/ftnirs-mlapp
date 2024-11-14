@@ -8,10 +8,7 @@ COPY requirements.txt .
 
 RUN pip install --no-cache-dir --upgrade -r requirements.txt
 
-#do this seperately- maybe better to include in requirements.txt, but slightly more complex to edit within the file
-ARG MLCODE_RELEASE
-ENV MLCODE_RELEASE=${MLCODE_RELEASE}
-pip install git+https://github.com/DanWoodrichNOAA/ftnirs-ml-codebase.git@${MLCODE_RELEASE}
+RUN pip install git+https://github.com/DanWoodrichNOAA/ftnirs-ml-codebase.git@${MLCODE_RELEASE}
 
 COPY . . 
 
