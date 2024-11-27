@@ -1,3 +1,5 @@
+print("HOME page loading...")
+
 import csv
 from collections import Counter
 import os
@@ -947,37 +949,49 @@ def unpack_data_pane_values_extra(out_dict,children):
 
     return out_dict
 
+#in future, try to get dash 'long callback' working instead of using this.
+#@callback(
+#    Output('run-button', 'disabled', allow_duplicate=True),
+#    Input('run-button', 'n_clicks'),
+#prevent_initial_call=True
+#)
+#def temp_disable_button(n_clicks):
+#    if n_clicks is not None:
+#        pass
+#    else:
+#        return True
 
 #considering: make instead of reading from params dict, have it loop through different blocks
 #and populate the params dict here. f
 @callback(
     Output('alert-model-run-processing-fail','is_open'),
-     Output('alert-model-run-ds-fail','is_open'),
-     Output('alert-model-run-models-fail','is_open'),
-     Output('run-message', 'children'),
-     Output('config-report', 'children'),
-     Output('stats-out', 'children'),
-     Output('artifacts-out', 'children'),
-     Output('download-out', 'children'),
-     Output('upload-out', 'children', allow_duplicate=True),
-     Output("params_dict","data"),
-     Output("run_id", "data"),
-     Output("modelrun_stats", "data"),
-     Output("modelrun_data", "data"),
-     Output("config_table", "data"),
-     Input('run-button', 'n_clicks'),
-     State('mode-select', 'value'),
-     State('pretrained_value_dict', 'data'),
-     State('pretrained_model_metadata_dict', 'data'),
-     State('approaches_value_dict', 'data'),
-     State('data-pane', 'children'),
-     State('dataset-select', 'value'),
-     State('params-holder', 'children'),
-     State("session-id", "data"),
-     State('data_metadata_dict',"data"),
-     #running=[
-     #   (Output("run-button", "disabled"), True, False),
-     # ],
+    Output('alert-model-run-ds-fail','is_open'),
+    Output('alert-model-run-models-fail','is_open'),
+    Output('run-message', 'children'),
+    Output('config-report', 'children'),
+    Output('stats-out', 'children'),
+    Output('artifacts-out', 'children'),
+    Output('download-out', 'children'),
+    Output('upload-out', 'children', allow_duplicate=True),
+    Output("params_dict","data"),
+    Output("run_id", "data"),
+    Output("modelrun_stats", "data"),
+    Output("modelrun_data", "data"),
+    Output("config_table", "data"),
+    Output('run-button', 'disabled', allow_duplicate=True),
+    Input('run-button', 'n_clicks'),
+    State('mode-select', 'value'),
+    State('pretrained_value_dict', 'data'),
+    State('pretrained_model_metadata_dict', 'data'),
+    State('approaches_value_dict', 'data'),
+    State('data-pane', 'children'),
+    State('dataset-select', 'value'),
+    State('params-holder', 'children'),
+    State("session-id", "data"),
+    State('data_metadata_dict',"data"),
+    #running=[
+    #(Output("run-button", "disabled"), True, False),
+    #],
     prevent_initial_call=True,
     #background = True #todo this is returning pickle/diskcache error trying to run as background task. Confirmed that nothing in the callback python function itself is causing the error
     #todo Next, try to run a simpler background task to see if the libraries and background are at least correctly configured.
@@ -1076,7 +1090,7 @@ def model_run_event(n_clicks,mode,pretrained_model,pretrained_model_metadata,app
                 #blob = STORAGE_CLIENT.bucket(TMP_BUCKET).blob(f'config_{run_id}.yml')
                 #blob.upload_from_string(config_table.to_csv(), 'text/csv')
 
-                config_out_children = [html.Div(id='config-body',children=[html.Div(id='run-name-block',children =[html.Div(id='run-name-prompt',children = "Run name:"),
+                config_out_children = [html.Div(id='config-body',children=[html.Div(id='run-name-block',children =[html.Div(id='run-name-prompt',children = "Model name:"),
                                         dcc.Input(id='run-name', type="text", placeholder="my_unique_pretrained_model_name",style={'textAlign': 'left', 'vertical-align': 'top','width':"150%"}),
                                                                                html.Div(id='description-prompt', children="Description:"),
                                         dcc.Textarea(id='description',style={'textAlign': 'left','vertical-align': 'top','height':100,'width':"150%"})
@@ -1242,9 +1256,6 @@ def model_run_event(n_clicks,mode,pretrained_model,pretrained_model_metadata,app
 
                     LOGGER_MANUAL.info(f"{session_id} Preprocessing and formatting data (rid: {run_id[:6]}...)")
 
-                    #import code
-                    #code.interact(local=dict(globals(), **locals()))
-
                     formatted_data, metadata, data_hashes = format_data(data, filter_CHOICE=model_metadata[-1]['filter'],
                                                            scaler=model_metadata[-1]['scaler'], splitvec=[0, 0] if mode == "Inference" else splitvec,
                                                            interp_minmaxstep=interp,add_scale=True if mode == "Fine-tuning" else False)
@@ -1337,8 +1348,7 @@ def model_run_event(n_clicks,mode,pretrained_model,pretrained_model_metadata,app
 
         return [processing_fail,ds_fail,model_fail,message,config_out_payload,stats_out,artifacts_out,download_out,\
                 html.Button("Upload Trained model", id="btn-upload-pretrained") if mode != "Inference" and not (processing_fail or any_error) else "",\
-                params_dict if not (processing_fail or any_error) else "",run_id,stats_out,data_out,config_table] #stats_out,data_out
-
+                params_dict if not (processing_fail or any_error) else "",run_id,stats_out,data_out,config_table,False] #stats_out,data_out
 
 @callback(Output('train_val',"children"),
                 Output('val_val',"children"),

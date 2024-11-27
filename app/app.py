@@ -30,7 +30,7 @@ background_callback_manager  = DiskcacheManager(CACHE)
 
 app = Dash(__name__, requests_pathname_prefix=f"/{os.getenv('APPNAME')}/", routes_pathname_prefix=f"/{os.getenv('APPNAME')}/",
                     external_stylesheets=external_stylesheets,
-                    use_pages=True, update_title=None,background_callback_manager =background_callback_manager )
+                    use_pages=True, update_title=None,background_callback_manager =background_callback_manager)
 
 #attempt to add some dynamic callbacks in here, since with app.callback (with app object available) I can use
 #lambda decorators to deal with bool variables.
