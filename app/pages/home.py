@@ -1015,7 +1015,7 @@ def model_run_event(n_clicks,mode,pretrained_model,pretrained_model_metadata,app
         ds_fail = False
         model_fail = False
 
-        data, artifacts, stats = [], [], []
+        data_out, artifacts, stats, config_table = [], [], [], None
 
         any_error = False
 
@@ -1102,7 +1102,9 @@ def model_run_event(n_clicks,mode,pretrained_model,pretrained_model_metadata,app
                                        html.Div(id='config-report-datasets',children ='Datasets: ')] +\
                                        [html.Div(id='config-report-datasets-' + i,children="- "+str(i),style={'marginLeft': 15}) for i in datasets] +\
                                        [html.Div(id='config-report-parameters',children ='Parameters: ')] + \
-                                       [html.Div(id='config-report-parameters-' + a,children="- "+a+": "+str(b),style={'marginLeft': 15}) for (a,b) in config_dict["params_dict"].items()],style={'width': left_body_width})]
+                                       [html.Div(id='config-report-parameters-' + a,children="- "+a+": "+str(b),style={'marginLeft': 15}) for (a,b) in config_dict["params_dict"].items()] + \
+                                       [html.Div(id='mlapp-vers', children=f"{os.getenv('APPNAME')} version: " + os.getenv('WEBAPP_RELEASE')),
+                                       html.Div(id='mlcode-vers',children=f"ML codebase version: " + os.getenv('MLCODE_RELEASE'))],style={'width': left_body_width})]
 
 
                 #this is where model will actually run
@@ -1116,7 +1118,13 @@ def model_run_event(n_clicks,mode,pretrained_model,pretrained_model_metadata,app
 
                 print("GOT TO HERE")
 
+                #make a ds combining the original datasets. Drop WN, add a column signifying the data source.
+
+
+
+
                 data = []
+                combined_data = []
                 for m in datasets:
                     cloud_download = False
                     #use the metadata dict to get hash
@@ -1137,12 +1145,21 @@ def model_run_event(n_clicks,mode,pretrained_model,pretrained_model_metadata,app
                         LOGGER_MANUAL.info(f"{session_id} Reading data {m} from cloud (rid: {run_id[:6]}...)")
                         data_b64 = STORAGE_CLIENT.bucket(DATA_BUCKET).blob(f"datasets/{m}").download_as_bytes()
                         blob = STORAGE_CLIENT.bucket(DATA_BUCKET).get_blob(f'datasets/{m}')
-                        blob.metadata['data_hash']
-                        CACHE.set(blob.metadata['data_hash'], data_b64, expire= CACHE_EXPIRY * 24 * 60 * 60)
+                        ds_hash = blob.metadata['data_hash']
+                        CACHE.set(ds_hash, data_b64, expire= CACHE_EXPIRY * 24 * 60 * 60)
 
-                    data.append(pd.read_csv(io.BytesIO(data_b64)))
+                    single_dataset = pd.read_csv(io.BytesIO(data_b64))
 
-                #data = [pd.read_csv(io.BytesIO(STORAGE_CLIENT.bucket(DATA_BUCKET).blob(f"datasets/{i}").download_as_bytes())) for i in datasets]
+                    data.append(single_dataset)
+
+                    single_dataset_copy = single_dataset.copy()
+
+                    single_dataset_copy['dataset_name'] = m
+                    single_dataset_copy['dataset_hash'] = ds_hash
+
+                    combined_data.append(single_dataset_copy)
+
+                combined_data = pd.concat(combined_data)
 
                 if len(data)==1:
                     data = data[0]
@@ -1184,6 +1201,7 @@ def model_run_event(n_clicks,mode,pretrained_model,pretrained_model_metadata,app
                 else:
                     data = data.drop(columns=drop_cols, errors="ignore") #need to ignore errors as sometimes data_pane_vals_dict provides columns only present in pretrained model, not dataset.
 
+
                 if mode == 'Training':
 
                     print("GOT TO HERE2")
@@ -1209,6 +1227,7 @@ def model_run_event(n_clicks,mode,pretrained_model,pretrained_model_metadata,app
                         #supplying the parameters, using default values
                         model, training_outputs, additional_outputs = TrainingModeWithoutHyperband(
                             data=formatted_data,
+                            scaler = metadata['scaler'],
                             bio_idx=metadata["datatype_indices"]["bio_indices"],
                             wn_idx=metadata["datatype_indices"]["wn_indices"],
                             total_bio_columns=total_bio_columns,
@@ -1221,6 +1240,7 @@ def model_run_event(n_clicks,mode,pretrained_model,pretrained_model_metadata,app
                     elif approach == 'hyperband tuning model':
                         model, training_outputs, additional_outputs = TrainingModeWithHyperband(
                             data=formatted_data,
+                            scaler=metadata['scaler'],
                             bio_idx=metadata["datatype_indices"]["bio_indices"],
                             wn_idx=metadata["datatype_indices"]["wn_indices"],
                             total_bio_columns=total_bio_columns,
@@ -1229,6 +1249,9 @@ def model_run_event(n_clicks,mode,pretrained_model,pretrained_model_metadata,app
                             callbacks = callbacks,
                             seed_value = config_dict["params_dict"].get('seed')
                         )
+
+                    predictions = training_outputs['predictions']
+                    stats = training_outputs['stats']
 
                     metadata.update({'model_col_names': training_outputs["model_col_names"],
                                      'data_hashes': [{a: b} for (a, b) in zip(datasets, data_hashes)]})
@@ -1263,14 +1286,8 @@ def model_run_event(n_clicks,mode,pretrained_model,pretrained_model_metadata,app
                 if mode == "Inference":
 
                     LOGGER_MANUAL.info(f"{session_id} Generating predictions (rid: {run_id[:6]}...)")
-                    predictions = InferenceMode(model, formatted_data, model_metadata[-1]['scaler'],model_metadata[-1]['model_col_names'])
+                    predictions,stats = InferenceMode(model, formatted_data, model_metadata[-1]['scaler'],model_metadata[-1]['model_col_names'])
                     LOGGER_MANUAL.info(f"{session_id} Finished generating predictions (rid: {run_id[:6]}...)")
-
-                    stats = {"TBA": True}
-                    data_out = {"predictions":predictions.flatten().tolist()}
-
-                    artifacts = [html.Div(id='figure-title', style={'textAlign': 'left'}, children="Age Prediction Histogram:"),dcc.Graph(id='figure',figure = px.histogram(pd.DataFrame(predictions.flatten().tolist(), columns=['Ages']),x="Ages"))]
-
 
                 elif mode == "Fine-tuning":
 
@@ -1302,22 +1319,37 @@ def model_run_event(n_clicks,mode,pretrained_model,pretrained_model_metadata,app
 
                     blob = STORAGE_CLIENT.bucket(TMP_BUCKET).blob(model_path)
                     blob.upload_from_file(zipdest)
-                    #--------
 
-                    #evalute against labeled data and produce stats
-                    #todo- break apart the ML codebase logic to isolate this
+                #import code
+                #code.interact(local=dict(globals(), **locals()))
 
-                    stats = {"r2_score":training_outputs["r2_score"]}
-                    artifacts = None #this should be the dash graph.
-                    #import code
-                    #code.interact(local=dict(globals(), **locals()))
-                    data_out = formatted_data.to_dict("records")
+                #if training data exists, produce training artifacts.
+                if stats['training']['nrow']>0:
 
-                else:
-                    pass
-                    #produce a list of all the  ages.
+                    combined_data['predictions'] = predictions  # probably should doublecheck against any reordering.
+                    combined_data['split']=formatted_data['split']
 
-                #data,artifacts,stats,dataset_titles = run_model(
+                    fig = px.scatter(combined_data,x='age',y='predictions',color='split',
+                    labels={"age":"True Values","predictions":"Predicted Values"},template="plotly")
+
+                    fig.add_shape(type="line",x0=combined_data["age"].min(),y0=combined_data["age"].min(),x1=combined_data["age"].max(),y1=combined_data["age"].max(),
+                                  line=dict(color="Black",dash="dash"),name="Perfect Prediction")
+
+                    artifacts.append([html.Div(id='truth-vs-pred-splits', style={'textAlign': 'left'}, children="Predicted vs. Truth Values by Training Split:"),dcc.Graph(id="truth-vs-pred-splits-figure",figure=fig)])
+
+                    #plot predicted vs aged
+                    #artifacts.append(
+                    #    [html.Div(id='figure-title', style={'textAlign': 'left'}, children="Age Prediction Histogram:"),
+                    #     dcc.Graph(id='figure',
+                    #               figure=px.histogram(pd.DataFrame(predictions.flatten().tolist(), columns=['Ages']),
+                    #                                   x="Ages"))])
+
+                    #plot residuals (?)
+
+                #if unaged data are present, plot a hist of these data.
+                if stats['unaged']['nrow']>0:
+
+                    artifacts.append([html.Div(id='unaged-hist', style={'textAlign': 'left'}, children="Age Prediction Histogram:"),dcc.Graph(id='unaged-hist-figure',figure = px.histogram(pd.DataFrame(predictions.flatten().tolist(), columns=['Ages']),x="Ages"))])
 
                 message = "Run Succeeded!"
 
@@ -1331,24 +1363,28 @@ def model_run_event(n_clicks,mode,pretrained_model,pretrained_model_metadata,app
                 artifacts = None
                 data_out = None
 
-
         download_out = [html.Div([html.Button("Download Results", id="btn-download-results"),
                     dcc.Download(id="download-results")]) if not (processing_fail or any_error) else ""]
 
-        artifacts_out = html.Div(artifacts,style={'textAlign': 'left', 'vertical-align': 'top'})
+        artifacts_out = [html.Div([x for xs in artifacts for x in xs],style={'textAlign': 'left', 'vertical-align': 'top'})]
 
-        stats_out = html.Div([
+        stats_table = pd.DataFrame.from_dict(stats,orient='index')
+        #import code
+        #code.interact(local=dict(globals(), **locals()))
+        stats_table = stats_table.reset_index().rename(columns={'index':'split'})
+
+        stats_table=stats_table.round(3)
+        stats_present = [html.Div([
                         html.Div(
                         [
                             html.Div(id='stats-title',children="Run stats:"),
-                            dash_table.DataTable([stats]), #stats.to_dict('records')
-                        ],style={'textAlign': 'left', 'vertical-align': 'top'}) if not (processing_fail or any_error) else ""])
+                            dash_table.DataTable(stats_table.to_dict('records'),[{"name": i, "id": i} for i in stats_table.columns]), #stats
+                        ],style={'textAlign': 'left', 'vertical-align': 'top'}) if not (processing_fail or any_error) else ""])]
 
-        #print(f"modelpath:{model_path}")
 
-        return [processing_fail,ds_fail,model_fail,message,config_out_payload,stats_out,artifacts_out,download_out,\
+        return [processing_fail,ds_fail,model_fail,message,config_out_payload,stats_present,artifacts_out,download_out,\
                 html.Button("Upload Trained model", id="btn-upload-pretrained") if mode != "Inference" and not (processing_fail or any_error) else "",\
-                params_dict if not (processing_fail or any_error) else "",run_id,stats_out,data_out,config_table,False] #stats_out,data_out
+                params_dict if not (processing_fail or any_error) else "",run_id,stats,None,config_table,False] #last none should be stats table
 
 @callback(Output('train_val',"children"),
                 Output('val_val',"children"),
@@ -1571,8 +1607,6 @@ def trained_model_publish(n_clicks,run_name,description,run_id):
         model_path = f'models/{model_name}'
 
 
-        #import code
-        #code.interact(local=dict(globals(), **locals()))
 
         model, metadata, _ = extract_model(STORAGE_CLIENT.bucket(TMP_BUCKET).blob(tmp_model_path).download_as_bytes(), tmp_model_name,upload_to_gcp=False)
 
