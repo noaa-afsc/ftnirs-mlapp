@@ -252,7 +252,7 @@ layout = html.Div(id='parent', children=[
                 html.Div(id = "params-holder",children=[
                     html.Div(id="preprocessing_params",children=[
                     html.Div(WN_STRING_NAME+" filter choice:"),
-                    dcc.Dropdown(id='wn-filter',options=['savgol','moving_average','gaussian','median','wavelet','fourier','pca'], value=WN_FILTER_DEFAULT),
+                    dcc.Dropdown(id='wn-filter',options=['savgol','moving_average','gaussian','median','wavelet','fourier','pca','None'], value=WN_FILTER_DEFAULT),
                     html.Div(WN_STRING_NAME+" scaling choice:"),
                     dcc.Dropdown(id='wn-scaling',options=['MinMaxScaler', 'StandardScaler', 'MaxAbsScaler', 'RobustScaler', 'Normalizer'], value=WN_SCALING_DEFAULT),
                     html.Div("Biological scaling choice:"),
@@ -1120,9 +1120,6 @@ def model_run_event(n_clicks,mode,pretrained_model,pretrained_model_metadata,app
 
                 #make a ds combining the original datasets. Drop WN, add a column signifying the data source.
 
-
-
-
                 data = []
                 combined_data = []
                 for m in datasets:
@@ -1149,6 +1146,9 @@ def model_run_event(n_clicks,mode,pretrained_model,pretrained_model_metadata,app
                         CACHE.set(ds_hash, data_b64, expire= CACHE_EXPIRY * 24 * 60 * 60)
 
                     single_dataset = pd.read_csv(io.BytesIO(data_b64))
+
+                    #make sure the datasets use pd.NA instead of np.nan
+                    single_dataset = single_dataset.fillna(pd.NA)
 
                     data.append(single_dataset)
 
@@ -1214,6 +1214,9 @@ def model_run_event(n_clicks,mode,pretrained_model,pretrained_model_metadata,app
 
                     LOGGER_MANUAL.info(f"{session_id} Preprocessing and formatting data (rid: {run_id[:6]}...)")
 
+
+                    config_dict["params_dict"]["wn-filter"] = None if config_dict["params_dict"]["wn-filter"] == "None" else config_dict["params_dict"]["wn-filter"]
+
                     formatted_data, metadata, data_hashes = format_data(data,filter_CHOICE=config_dict["params_dict"]["wn-filter"],scaler=config_dict["params_dict"]["bio-scaling"],\
                                                                      wn_scaler=config_dict["params_dict"].get("wn-scaling"),\
                                                                      response_scaler=config_dict["params_dict"].get("response-scaling"),\
@@ -1250,9 +1253,6 @@ def model_run_event(n_clicks,mode,pretrained_model,pretrained_model_metadata,app
                             seed_value = config_dict["params_dict"].get('seed')
                         )
 
-                    predictions = training_outputs['predictions']
-                    stats = training_outputs['stats']
-
                     metadata.update({'model_col_names': training_outputs["model_col_names"],
                                      'data_hashes': [{a: b} for (a, b) in zip(datasets, data_hashes)]})
 
@@ -1279,9 +1279,14 @@ def model_run_event(n_clicks,mode,pretrained_model,pretrained_model_metadata,app
 
                     LOGGER_MANUAL.info(f"{session_id} Preprocessing and formatting data (rid: {run_id[:6]}...)")
 
-                    formatted_data, metadata, data_hashes = format_data(data, filter_CHOICE=model_metadata[-1]['filter'],
-                                                           scaler=model_metadata[-1]['scaler'], splitvec=[0, 0] if mode == "Inference" else splitvec,
-                                                           interp_minmaxstep=interp,add_scale=True if mode == "Fine-tuning" else False)
+                    #import code
+                    #code.interact(local=dict(globals(), **locals()))
+
+                    print(model_metadata[-1]['scaler'])
+
+                    formatted_data, metadata, data_hashes = format_data(data, filter_CHOICE=model_metadata[-1]['filter'],scaler=model_metadata[-1]['scaler'], splitvec=[0, 0] if mode == "Inference" else splitvec,interp_minmaxstep=interp,add_scale=True if mode == "Fine-tuning" else False)
+
+                    print('got to here1.5')
 
                 if mode == "Inference":
 
@@ -1294,12 +1299,15 @@ def model_run_event(n_clicks,mode,pretrained_model,pretrained_model_metadata,app
                     LOGGER_MANUAL.info(f"{session_id} Fine-tuning model (rid: {run_id[:6]}...)")
 
                     model, training_outputs, additional_outputs = TrainingModeFinetuning(
-                        model=model, data=formatted_data,
+                        model=model, data=formatted_data,scaler=model_metadata[-1]['scaler'],
                         bio_idx=metadata["datatype_indices"]["bio_indices"],
                         names_ordered=model_metadata[-1]['model_col_names'],
                         seed_value=config_dict["params_dict"].get('seed'),
                         epochs=config_dict["params_dict"].get('epoch', 30),
                         callbacks = callbacks)
+
+                    #import code
+                   # code.interact(local=dict(globals(), **locals()))
 
                     metadata.update({'model_col_names': training_outputs["model_col_names"],
                                      'data_hashes': [{a: b} for (a, b) in zip(datasets, data_hashes)]})
@@ -1312,6 +1320,9 @@ def model_run_event(n_clicks,mode,pretrained_model,pretrained_model_metadata,app
 
                 if mode != "Inference":
 
+                    predictions = training_outputs['predictions']
+                    stats = training_outputs['stats']
+
                     #seemed inconvenient to get it into a format dash could serialize, so just upload to cloud, and redownload and unpack to add description metadata
                     #(see how performance goes with that)
                     #_____
@@ -1320,22 +1331,25 @@ def model_run_event(n_clicks,mode,pretrained_model,pretrained_model_metadata,app
                     blob = STORAGE_CLIENT.bucket(TMP_BUCKET).blob(model_path)
                     blob.upload_from_file(zipdest)
 
-                #import code
-                #code.interact(local=dict(globals(), **locals()))
-
                 #if training data exists, produce training artifacts.
-                if stats['training']['nrow']>0:
+                if stats['training']['nrow']>0 or stats['validation']['nrow']>0 or stats['test']['nrow']>0:
 
-                    combined_data['predictions'] = predictions  # probably should doublecheck against any reordering.
-                    combined_data['split']=formatted_data['split']
+                    combined_data['predictions']=predictions
+                    combined_data['split'] = formatted_data['split']
 
-                    fig = px.scatter(combined_data,x='age',y='predictions',color='split',
+                    #depending on if there are multiple in split, use that or data source  as color.
+                    if (len(combined_data['split'].unique())>1):
+                        color_field = 'split'
+                    else:
+                        color_field = 'dataset_name'
+
+                    fig = px.scatter(combined_data,x='age',y='predictions',color=color_field,
                     labels={"age":"True Values","predictions":"Predicted Values"},template="plotly")
 
                     fig.add_shape(type="line",x0=combined_data["age"].min(),y0=combined_data["age"].min(),x1=combined_data["age"].max(),y1=combined_data["age"].max(),
                                   line=dict(color="Black",dash="dash"),name="Perfect Prediction")
 
-                    artifacts.append([html.Div(id='truth-vs-pred-splits', style={'textAlign': 'left'}, children="Predicted vs. Truth Values by Training Split:"),dcc.Graph(id="truth-vs-pred-splits-figure",figure=fig)])
+                    artifacts.append([html.Div(id='truth-vs-pred', style={'textAlign': 'left'}, children=f"Predicted vs. Truth Values by {color_field}:"),dcc.Graph(id="truth-vs-pred-figure",figure=fig)])
 
                     #plot predicted vs aged
                     #artifacts.append(
@@ -1360,7 +1374,7 @@ def model_run_event(n_clicks,mode,pretrained_model,pretrained_model_metadata,app
                 config_out_payload = [html.Div(id='error-title',children="ERROR:"),html.Div(id='error message',children =[str(e)])]
                 processing_fail = True
                 stats = {}
-                artifacts = None
+                artifacts = []
                 data_out = None
 
         download_out = [html.Div([html.Button("Download Results", id="btn-download-results"),
@@ -1368,10 +1382,13 @@ def model_run_event(n_clicks,mode,pretrained_model,pretrained_model_metadata,app
 
         artifacts_out = [html.Div([x for xs in artifacts for x in xs],style={'textAlign': 'left', 'vertical-align': 'top'})]
 
-        stats_table = pd.DataFrame.from_dict(stats,orient='index')
         #import code
         #code.interact(local=dict(globals(), **locals()))
+        stats_table = pd.DataFrame.from_dict(stats,orient='index')
+
         stats_table = stats_table.reset_index().rename(columns={'index':'split'})
+        stats_table['split']= pd.Categorical(stats_table['split'], ["training", "validation", "test","unaged"])
+        stats_table = stats_table.sort_values("split")
 
         stats_table=stats_table.round(3)
         stats_present = [html.Div([
@@ -1606,8 +1623,6 @@ def trained_model_publish(n_clicks,run_name,description,run_id):
         model_name = f"{run_name}.keras.zip"
         model_path = f'models/{model_name}'
 
-
-
         model, metadata, _ = extract_model(STORAGE_CLIENT.bucket(TMP_BUCKET).blob(tmp_model_path).download_as_bytes(), tmp_model_name,upload_to_gcp=False)
 
         #append description
@@ -1616,14 +1631,16 @@ def trained_model_publish(n_clicks,run_name,description,run_id):
         else:
             metadata.update({"description": description})
 
-        zipdest = packModelWithMetadata(model, model_name, metadata=metadata,
-                                        previous_metadata=None,
+        zipdest = packModelWithMetadata(model, model_name, metadata=None,
+                                        previous_metadata=metadata,
                                         mandate_some_metadata_fields=False)
 
         #pack it back up and write it.
 
         blob = STORAGE_CLIENT.bucket(DATA_BUCKET).blob(model_path)
         blob.upload_from_file(zipdest)
+
+        print(metadata)
 
         attach_model_metadata_gcp_obj(metadata, blob)
 
@@ -1686,9 +1703,16 @@ def attach_model_metadata_gcp_obj(metadata,blob):
 
     wn_scaler = str(metadata['scaler'][0].named_transformers_[WN_STRING_NAME])[:-2]
     response_scaler = str(metadata['scaler'][0].named_transformers_[RESPONSE_COLUMNS[0]])[:-2]
-    bio_scalers = [str(metadata['scaler'][0].named_transformers_[i])[:-2] for i in
-                   metadata['scaler'][0].named_transformers_ if i != WN_STRING_NAME or i != response_scaler]
-    bio_scaler = bio_scalers[0] if all([i == bio_scalers[0] for i in bio_scalers]) else 'mixed'
+
+    bio_scalers = [str(metadata['scaler'][0].named_transformers_[i])[:-2] for i in metadata['scaler'][0].named_transformers_ if i != WN_STRING_NAME or i != response_scaler]
+    bio_scalers = set(bio_scalers)
+    if 'FunctionTransformer' in bio_scalers:
+        bio_scalers.remove('FunctionTransformer')
+
+    bio_scalers = list(bio_scalers)
+    bio_scaler = bio_scalers[0] if len(bio_scalers)>=1 else 'mixed'
+
+    #bio_scaler = bio_scalers[0] if all([i == bio_scalers[0] for i in bio_scalers]) else 'mixed'
 
     wn_filter = metadata['filter']
 
