@@ -1,5 +1,6 @@
 print("HOME page loading...")
 
+import json
 import csv
 from collections import Counter
 import os
@@ -789,6 +790,8 @@ def download_results(n_clicks,run_id,run_name,model_name_and_description,params_
             #obj = io.BytesIO(blob.download_as_bytes())
             #obj.seek(0)
 
+            stats = json.loads(stats)
+
             obj = io.BytesIO(pd.DataFrame.from_dict(stats).to_csv(index=False).encode('utf-8'))
             info = tarfile.TarInfo(name = "stats.csv")
             info.size = len(obj.getvalue())
@@ -799,7 +802,7 @@ def download_results(n_clicks,run_id,run_name,model_name_and_description,params_
 
             #obj = io.BytesIO(blob.download_as_bytes())
             #obj.seek(0)
-            obj = io.BytesIO(pd.DataFrame.from_dict(config).to_csv(index=False).encode('utf-8'))
+            obj = io.BytesIO(config.encode('utf-8'))
             info = tarfile.TarInfo(name="config.yml")
             info.size = len(obj.getvalue())
             tar.addfile(tarinfo=info, fileobj=obj)
@@ -830,10 +833,18 @@ def download_results(n_clicks,run_id,run_name,model_name_and_description,params_
 
             #add data
 
-            obj = io.BytesIO(pd.DataFrame.from_dict(data).to_csv(index=False).encode('utf-8'))
-            info = tarfile.TarInfo(name="data.csv")
-            info.size = len(obj.getvalue())
-            tar.addfile(tarinfo=info, fileobj=obj)
+            #import code
+            #code.interact(local=dict(globals(), **locals()))
+
+            data = json.loads(data)
+            names = ["original_with_predictions","ml_preprocessed_formatted"]#hard code this until protocols change to need variability here.
+
+            for m in range(len(data)):
+
+                obj = io.BytesIO(pd.DataFrame.from_dict(data[m]).to_csv(index=False).encode('utf-8'))
+                info = tarfile.TarInfo(name=f"{names[m]}.csv")
+                info.size = len(obj.getvalue())
+                tar.addfile(tarinfo=info, fileobj=obj)
 
         tar_stream.seek(0)
 
@@ -1083,8 +1094,11 @@ def model_run_event(n_clicks,mode,pretrained_model,pretrained_model_metadata,app
                 config_dict.update({"Pretrained model": pretrained_model})
                 config_dict.update({"Training approach": approach})
                 config_dict.update({"Mode":mode})
+                config_dict.update({"mlapp-vers": f"{os.getenv('APPNAME')} version: " + os.getenv('WEBAPP_RELEASE')})
+                config_dict.update({"mlcode-vers": f"ML codebase version: " + os.getenv('MLCODE_RELEASE')})
 
-                config_table = config_dict
+                config_table = config_dict.copy()
+                config_table = json.dumps(config_table,indent=4)
 
                 #don't do this, just save as dcc store.
                 #blob = STORAGE_CLIENT.bucket(TMP_BUCKET).blob(f'config_{run_id}.yml')
@@ -1103,8 +1117,8 @@ def model_run_event(n_clicks,mode,pretrained_model,pretrained_model_metadata,app
                                        [html.Div(id='config-report-datasets-' + i,children="- "+str(i),style={'marginLeft': 15}) for i in datasets] +\
                                        [html.Div(id='config-report-parameters',children ='Parameters: ')] + \
                                        [html.Div(id='config-report-parameters-' + a,children="- "+a+": "+str(b),style={'marginLeft': 15}) for (a,b) in config_dict["params_dict"].items()] + \
-                                       [html.Div(id='mlapp-vers', children=f"{os.getenv('APPNAME')} version: " + os.getenv('WEBAPP_RELEASE')),
-                                       html.Div(id='mlcode-vers',children=f"ML codebase version: " + os.getenv('MLCODE_RELEASE'))],style={'width': left_body_width})]
+                                       [html.Div(id='mlapp-vers', children=config_dict['mlapp-vers']),
+                                       html.Div(id='mlcode-vers',children=config_dict['mlcode-vers'])],style={'width': left_body_width})]
 
 
                 #this is where model will actually run
@@ -1256,7 +1270,7 @@ def model_run_event(n_clicks,mode,pretrained_model,pretrained_model_metadata,app
                     metadata.update({'model_col_names': training_outputs["model_col_names"],
                                      'data_hashes': [{a: b} for (a, b) in zip(datasets, data_hashes)]})
 
-                    zipdest = packModelWithMetadata(model, f"model_{run_id}.keras.zip", metadata=metadata,
+                    zipdest = packModelWithMetadata(model, f"trained_model_{run_id}.keras.zip", metadata=metadata,
                                                     previous_metadata=None,
                                                     mandate_some_metadata_fields=False)
 
@@ -1279,8 +1293,7 @@ def model_run_event(n_clicks,mode,pretrained_model,pretrained_model_metadata,app
 
                     LOGGER_MANUAL.info(f"{session_id} Preprocessing and formatting data (rid: {run_id[:6]}...)")
 
-                    #import code
-                    #code.interact(local=dict(globals(), **locals()))
+
 
                     print(model_metadata[-1]['scaler'])
 
@@ -1312,7 +1325,7 @@ def model_run_event(n_clicks,mode,pretrained_model,pretrained_model_metadata,app
                     metadata.update({'model_col_names': training_outputs["model_col_names"],
                                      'data_hashes': [{a: b} for (a, b) in zip(datasets, data_hashes)]})
 
-                    zipdest = packModelWithMetadata(model, f"model_{run_id}.keras.zip", metadata=metadata,
+                    zipdest = packModelWithMetadata(model, f"trained_model_{run_id}.keras.zip", metadata=metadata,
                                                     previous_metadata=model_metadata,
                                                     mandate_some_metadata_fields=False)
 
@@ -1331,10 +1344,11 @@ def model_run_event(n_clicks,mode,pretrained_model,pretrained_model_metadata,app
                     blob = STORAGE_CLIENT.bucket(TMP_BUCKET).blob(model_path)
                     blob.upload_from_file(zipdest)
 
+                combined_data['predictions'] = predictions
+
                 #if training data exists, produce training artifacts.
                 if stats['training']['nrow']>0 or stats['validation']['nrow']>0 or stats['test']['nrow']>0:
 
-                    combined_data['predictions']=predictions
                     combined_data['split'] = formatted_data['split']
 
                     #depending on if there are multiple in split, use that or data source  as color.
@@ -1369,6 +1383,10 @@ def model_run_event(n_clicks,mode,pretrained_model,pretrained_model_metadata,app
 
                 config_out_payload = config_out_children
 
+                #may want to make these better outputs.
+                data_out.append(combined_data.to_dict())
+                data_out.append(formatted_data.to_dict())
+
             except Exception as e:
                 message = "Run Failed: error while processing algorithm"
                 config_out_payload = [html.Div(id='error-title',children="ERROR:"),html.Div(id='error message',children =[str(e)])]
@@ -1398,10 +1416,9 @@ def model_run_event(n_clicks,mode,pretrained_model,pretrained_model_metadata,app
                             dash_table.DataTable(stats_table.to_dict('records'),[{"name": i, "id": i} for i in stats_table.columns]), #stats
                         ],style={'textAlign': 'left', 'vertical-align': 'top'}) if not (processing_fail or any_error) else ""])]
 
-
         return [processing_fail,ds_fail,model_fail,message,config_out_payload,stats_present,artifacts_out,download_out,\
                 html.Button("Upload Trained model", id="btn-upload-pretrained") if mode != "Inference" and not (processing_fail or any_error) else "",\
-                params_dict if not (processing_fail or any_error) else "",run_id,stats,None,config_table,False] #last none should be stats table
+                params_dict if not (processing_fail or any_error) else "",run_id,stats_table.to_json(),json.dumps(data_out),config_table,False] #last none should be stats table
 
 @callback(Output('train_val',"children"),
                 Output('val_val',"children"),
@@ -1619,7 +1636,7 @@ def trained_model_publish(n_clicks,run_name,description,run_id):
 
         #DL and unpack model and metadata.
         tmp_model_path = f"trained_model_{run_id}.keras.zip"
-        tmp_model_name = f"model_{run_id}.keras.zip"
+        tmp_model_name = f"trained_model_{run_id}.keras.zip"
         model_name = f"{run_name}.keras.zip"
         model_path = f'models/{model_name}'
 
@@ -1845,7 +1862,7 @@ def data_check_datasets(file,load_data = True):
                     "other_columns": other_cols, "wave_number_start_index": [wave_number_start_index],
                     "wave_number_end_index": [wave_number_end_index], "wave_number_min": [wave_number_min],
                     "wave_number_max": [wave_number_max], "wave_number_step": [wave_number_step],
-                    "data_hash":data_hash,'data_rows':len(dataset)}
+                    "data_hash":data_hash,'data_rows':len(dataset)+1}
         if valid:
             return True,"",decoded if load_data else None,metadata #
         else:
