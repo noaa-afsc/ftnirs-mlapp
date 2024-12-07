@@ -21,7 +21,7 @@ import time
 import base64
 import h5py
 #import app_data
-from ftnirsml.constants import WN_MATCH,INFORMATIONAL,RESPONSE_COLUMNS,SPLITNAME,WN_STRING_NAME,IDNAME,STANDARD_COLUMN_NAMES,MISSING_DATA_VALUE,ONE_HOT_FLAG,MISSING_DATA_VALUE_UNSCALED,TRAINING_APPROACHES
+from ftnirsml.constants import WN_MATCH,INFORMATIONAL,RESPONSE_COLUMNS,SPLITNAME,WN_STRING_NAME,IDNAME,STANDARD_COLUMN_NAMES,MISSING_DATA_VALUE,ONE_HOT_FLAG,MISSING_DATA_VALUE_UNSCALED,TRAINING_APPROACHES,RESPONSENAME
 import diskcache
 #safer and less bespoke than what I previously implemented.
 import uuid
@@ -120,7 +120,6 @@ for i in TRAINING_APPROACHES.keys():
                 obj.append(dcc.Input(id=m, type=TRAINING_APPROACHES[i]["parameters"][m]["data_type"], \
                                                          placeholder=str(TRAINING_APPROACHES[i]["parameters"][m]["data_type2"]).split(" ")[1][1:-2] + \
                                      " (default: " + str(TRAINING_APPROACHES[i]["parameters"][m]["default_value"])+")"))
-        print(f"added to training approaches for {i}")
         TRAINING_APPROACHES[i]["dash_params"]=html.Div(obj)
 
 APP_STORAGE_TYPE = 'memory' #memory, session, local
@@ -184,8 +183,8 @@ layout = html.Div(id='parent', children=[
                 color="success",
                 duration=4000),
             dbc.Alert(
-                "Trained model upload failure: please specify a unique model name",
-                id="model-upload-from-session-failure",
+                "Model name failure: please specify a unique model name",
+                id="model-name-failure",
                 is_open=False,
                 color="danger",
                 duration=4000)
@@ -205,7 +204,6 @@ layout = html.Div(id='parent', children=[
         dcc.Store(id='dataset_select_last_clicked', storage_type=APP_STORAGE_TYPE,data = False),
         dcc.Store(id='modelrun_stats', storage_type=APP_STORAGE_TYPE,data = {}),
         dcc.Store(id='modelrun_data', storage_type=APP_STORAGE_TYPE,data = {}),
-        dcc.Store(id='model-name-and-description', storage_type=APP_STORAGE_TYPE,data = {}),
         dcc.Store(id='config_table', storage_type=APP_STORAGE_TYPE, data={}),
             html.Div(id='left col top row',children=[
             html.Div(id='datasets',children=[
@@ -387,14 +385,7 @@ html.Div(id="pretrained-present", style={'textAlign': 'left'}),
 )
 def update_approach_checklist(mode,pretrain_dict,pretrain_val,approach_val):
 
-    print('in update_approach_checklist')
-
     pretrain_val = pretrain_val["value"]
-
-    print('dict')
-    print(pretrain_dict)
-    print('val')
-    print(pretrain_val)
 
     opts = TRAINING_APPROACHES
 
@@ -402,10 +393,7 @@ def update_approach_checklist(mode,pretrain_dict,pretrain_val,approach_val):
 
         if mode == "Fine-tuning":
 
-            print('fine tune opts')
             opts = {key: val for (key, val) in opts.items() if opts[key]['finetunable']}
-
-            print(opts)
 
             #may change this flow depending on whether we include training approaches in model metadata or not
             if pretrain_dict != {}:
@@ -415,9 +403,6 @@ def update_approach_checklist(mode,pretrain_dict,pretrain_val,approach_val):
                         compat_opts = pretrain_dict[pretrain_val]['compatible_approaches']
 
                         opts = {key:val for (key,val) in opts.items() if key in compat_opts}
-
-            #print(opts)
-
 
         return [html.H4("Training Approaches:", style={'textAlign': "left"}),
             dcc.Dropdown(id='approaches-select', style={'width': 200}, options=[i for i in opts],value=approach_val["value"] if approach_val["value"] in opts else None)] #[] if approach_val["value"]==None else approach_val["value"]
@@ -523,18 +508,12 @@ def present_columns(data_dict,model_dict,datasets,mode,pretrained_val,approach_v
     valid_waves= 0
     for i in datasets:
         if data_dict[i]['wave_number_end_index']!="['-1']":
-            #print(data_dict[i]['wave_number_end_index'])
             wave_counts.append(f"{int(ast.literal_eval(data_dict[i]['wave_number_end_index'])[0])-int(ast.literal_eval(data_dict[i]['wave_number_start_index'])[0])}" + \
                                f";{round(float(ast.literal_eval(data_dict[i]['wave_number_min'])[0]),2)};{round(float(ast.literal_eval(data_dict[i]['wave_number_max'])[0]),2)};" +\
                                f"{round(float(ast.literal_eval(data_dict[i]['wave_number_step'])[0]),2)}")
             valid_waves = valid_waves + 1
 
-    print('wave_counts 1')
-    print(wave_counts)
     wave_counts = set(wave_counts)
-
-    print('wave_counts set')
-    print(wave_counts)
 
     #equivalent: how many ds have the same exact same wave_counts.
 
@@ -542,7 +521,6 @@ def present_columns(data_dict,model_dict,datasets,mode,pretrained_val,approach_v
     #equivalent = f"{(ds_count-len(wave_counts)+1)}/{ds_count}" if ds_count==0 else "NA"
     wav_str = f"{WN_STRING_NAME} valid: {valid_waves}/{ds_count}, equivalent: {(ds_count-len(wave_counts)+1)}/{ds_count}"
 
-    print(f"mode:{mode} pretrained_val:{pretrained_val}")
     if pretrained_val != None: #and mode is not 'Training':
 
         pretrained_include = [i.split(ONE_HOT_FLAG)[0] if ONE_HOT_FLAG in i else i for i in ast.literal_eval(model_dict[pretrained_val]['bio_columns'])] + [WN_STRING_NAME]
@@ -658,7 +636,6 @@ def update_pretrained_metadata_dict(known_pretrained,selected_pretrained,pretrai
         if len(excess_metadata) > 0:
             # remove out of date metadata
             for k in excess_metadata:
-                print("deleting "+k)
                 del pretrained_model_metadata_dict[k]
 
         uk_models = [k for k in selected_pretrained if k not in mmd_set]
@@ -712,16 +689,8 @@ def refresh_options(clicks):
 )
 def update_data_metadata_dict(known_datasets,selected_datasets,click_trigger,data_metadata_dict):
 
-    print(click_trigger)
-
-    #if click_input == None:
-    #    click_input = 0
-    #print(click_input)
-    #print(click_prev)
-
     #if refresh is hit, triggers special behavior where we flush known datasets
     if click_trigger: #click_input> click_prev:
-        print('DS refresh button was clicked!')
         kd_set = set([i["value"] for i in get_datasets()])
         dmd_set = set()
         data_metadata_dict = {}
@@ -758,8 +727,6 @@ def update_data_metadata_dict(known_datasets,selected_datasets,click_trigger,dat
             #upload the flag to
             data_metadata_dict.update({k:metadata})
             attach_metadata_to_blob(metadata,blob)
-    print("DMD:")
-    print(data_metadata_dict)
 
     return data_metadata_dict,False,ref_content
 
@@ -769,13 +736,13 @@ def update_data_metadata_dict(known_datasets,selected_datasets,click_trigger,dat
     Input('btn-download-results', 'n_clicks'),
     State('run_id', 'data'),
     State('run-name', 'value'),
-    State('model-name-and-description', 'data'),
     State('params_dict', 'data'),
     State("modelrun_stats", "data"),
     State("modelrun_data", "data"),
-    State("config_table", "data")
+    State("config_table", "data"),
+    State('description', 'value'),
 )
-def download_results(n_clicks,run_id,run_name,model_name_and_description,params_dict,stats,data,config):
+def download_results(n_clicks,run_id,run_name,params_dict,stats,data,config,description):
 
     if n_clicks is not None:
 
@@ -785,11 +752,6 @@ def download_results(n_clicks,run_id,run_name,model_name_and_description,params_
 
         with tarfile.open(fileobj=tar_stream, mode="w:gz") as tar:
             #stats
-            #blob = STORAGE_CLIENT.bucket(TMP_BUCKET).blob(f"stats_{run_id}.csv")
-
-            #obj = io.BytesIO(blob.download_as_bytes())
-            #obj.seek(0)
-
             stats = json.loads(stats)
 
             obj = io.BytesIO(pd.DataFrame.from_dict(stats).to_csv(index=False).encode('utf-8'))
@@ -810,45 +772,42 @@ def download_results(n_clicks,run_id,run_name,model_name_and_description,params_
             #add model object
             if params_dict["mode"] !="Inference":
 
-                print(model_name_and_description)
-                print(run_name)
+                if run_name is None or run_name=="":
+                    run_name = "unnamed"
 
-                #use the given name if available, otherwise use the unassigned name
-                if run_name!=None:
-                    model_name = model_name_and_description["model_name"]
-                    model_path = f'models/{model_name}'
+                    #return dcc.send_bytes(""),True
 
-                    blob = STORAGE_CLIENT.bucket(DATA_BUCKET).blob(model_path)
+                #import code
+                #code.interact(local=dict(globals(), **locals()))
 
-                else:
-                    model_name = f"trained_model_{run_id}.keras.zip"
+                #reads from temp. Could be issues with users expecting this to persist in their browser past the cycling window.
+                zipdest,_ = attach_description_model(run_id, run_name, description)
 
-                    blob = STORAGE_CLIENT.bucket(TMP_BUCKET).blob(model_name)
+                model_name = f"{run_name}.keras.zip"
 
-                obj = io.BytesIO(blob.download_as_bytes())
-                obj.seek(0)
+                zipdest.seek(0)
                 info = tarfile.TarInfo(name=model_name)
-                info.size = len(obj.getvalue())
-                tar.addfile(tarinfo=info, fileobj=obj)
+                info.size = len(zipdest.getvalue())
+                tar.addfile(tarinfo=info, fileobj=zipdest)
 
             #add data
+            blob = STORAGE_CLIENT.bucket(TMP_BUCKET).blob(f"ml_formatted_data_plus_untransformed_ages_{run_id}.csv")
+            obj = io.BytesIO(blob.download_as_bytes())
+            obj.seek(0)
+            info = tarfile.TarInfo(name="ml_formatted_data_plus_untransformed_ages.csv")
+            info.size = len(obj.getvalue())
+            tar.addfile(tarinfo=info, fileobj=obj)
 
-            #import code
-            #code.interact(local=dict(globals(), **locals()))
-
-            data = json.loads(data)
-            names = ["original_with_predictions","ml_preprocessed_formatted"]#hard code this until protocols change to need variability here.
-
-            for m in range(len(data)):
-
-                obj = io.BytesIO(pd.DataFrame.from_dict(data[m]).to_csv(index=False).encode('utf-8'))
-                info = tarfile.TarInfo(name=f"{names[m]}.csv")
-                info.size = len(obj.getvalue())
-                tar.addfile(tarinfo=info, fileobj=obj)
+            #blob = STORAGE_CLIENT.bucket(TMP_BUCKET).blob(f"ml_formatted_data_{run_id}.csv")
+            #obj = io.BytesIO(blob.download_as_bytes())
+            #obj.seek(0)
+            #info = tarfile.TarInfo(name="ml_formatted_data.csv")
+            #info.size = len(obj.getvalue())
+            #tar.addfile(tarinfo=info, fileobj=obj)
 
         tar_stream.seek(0)
 
-        return dcc.send_bytes(tar_stream.getvalue(),f"{run_id}_outputs.tar.gz")
+        return dcc.send_bytes(tar_stream.getvalue(),f"{run_id}_outputs.tar.gz") #,False
 
 #test: function to export values from data_columns after change
 
@@ -876,7 +835,6 @@ def update_std_col(std,std_opts,prev):
 
     #remove if unselected
     for i in std_opts:
-        print(i)
         if i['value'] in prev['std'] and i['value'] not in std and not i['disabled']:
             prev['std'].remove(i['value'])
     #add if selected
@@ -926,7 +884,6 @@ def unpack_children_for_values(out_dict,children):
                         else:
                             out_dict[(p,children['id'])] = False #(children['id'],False)
             elif 'id' in children:
-                #print(children)
                 out_dict[children['id']] = children['value']
 
         for key in children:
@@ -987,7 +944,7 @@ def unpack_data_pane_values_extra(out_dict,children):
     Output("params_dict","data"),
     Output("run_id", "data"),
     Output("modelrun_stats", "data"),
-    Output("modelrun_data", "data"),
+    #Output("modelrun_data", "data"),
     Output("config_table", "data"),
     Output('run-button', 'disabled', allow_duplicate=True),
     Input('run-button', 'n_clicks'),
@@ -1075,8 +1032,6 @@ def model_run_event(n_clicks,mode,pretrained_model,pretrained_model_metadata,app
             any_error = True
             config_out_payload = []
 
-        #print(params_dict)
-
         run_id = ""  # set default so if it errors out, still can return outputs
         if not any_error:
             try:
@@ -1105,9 +1060,9 @@ def model_run_event(n_clicks,mode,pretrained_model,pretrained_model_metadata,app
                 #blob.upload_from_string(config_table.to_csv(), 'text/csv')
 
                 config_out_children = [html.Div(id='config-body',children=[html.Div(id='run-name-block',children =[html.Div(id='run-name-prompt',children = "Model name:"),
-                                        dcc.Input(id='run-name', type="text", placeholder="my_unique_pretrained_model_name",style={'textAlign': 'left', 'vertical-align': 'top','width':"150%"}),
+                                        dcc.Input(id='run-name', type="text", placeholder="my_unique_pretrained_model_name",style={'textAlign': 'left', 'vertical-align': 'top','width':"150%"},value=""),
                                                                                html.Div(id='description-prompt', children="Description:"),
-                                        dcc.Textarea(id='description',style={'textAlign': 'left','vertical-align': 'top','height':100,'width':"150%"})
+                                        dcc.Textarea(id='description',value="",style={'textAlign': 'left','vertical-align': 'top','height':100,'width':"150%"})
                                                                                 ],style={"display": "inline-block"}) if mode!="Inference" else html.Div(id='run-name-block',children=[html.Div(id='run-name'),html.Div(id='description')])] +\
                                        [html.Div(id='config-report-rc',children = "Run Configuration:"),
                                        html.Div(id='config-report-mode', children="Mode: "+ mode),
@@ -1129,8 +1084,6 @@ def model_run_event(n_clicks,mode,pretrained_model,pretrained_model_metadata,app
                 #just write it here to take advantage of variables, turn into fxns later as sensible.
 
                 #at some point, have this read from a cache on disk to speed up.
-
-                print("GOT TO HERE")
 
                 #make a ds combining the original datasets. Drop WN, add a column signifying the data source.
 
@@ -1166,14 +1119,15 @@ def model_run_event(n_clicks,mode,pretrained_model,pretrained_model_metadata,app
 
                     data.append(single_dataset)
 
-                    single_dataset_copy = single_dataset.copy()
+                    single_dataset_minimal = single_dataset[[IDNAME,RESPONSENAME]]
 
-                    single_dataset_copy['dataset_name'] = m
-                    single_dataset_copy['dataset_hash'] = ds_hash
+                    single_dataset_minimal['dataset_name'] = m
+                    single_dataset_minimal['dataset_hash'] = ds_hash
 
-                    combined_data.append(single_dataset_copy)
+                    combined_data.append(single_dataset_minimal)
 
                 combined_data = pd.concat(combined_data)
+                combined_data = combined_data.rename(columns={'age':'ages_untransformed'})
 
                 if len(data)==1:
                     data = data[0]
@@ -1217,8 +1171,6 @@ def model_run_event(n_clicks,mode,pretrained_model,pretrained_model_metadata,app
 
 
                 if mode == 'Training':
-
-                    print("GOT TO HERE2")
 
                     if 'parameters' in TRAINING_APPROACHES[approach]:
                         supplied_params = {a:config_dict["params_dict"][a] for a in TRAINING_APPROACHES[approach]['parameters'] if a in config_dict["params_dict"]}
@@ -1282,8 +1234,8 @@ def model_run_event(n_clicks,mode,pretrained_model,pretrained_model_metadata,app
                     #for now, decided it's quick + easy to just download object from cloud each  time, can build in caching if that changes.
                     LOGGER_MANUAL.info(f"{session_id} Reading model from cloud (rid: {run_id[:6]}...)")
                     model, model_metadata, _ = extract_model(STORAGE_CLIENT.bucket(DATA_BUCKET).blob(f"models/{pretrained_model}").download_as_bytes(),pretrained_model, upload_to_gcp=False)
-                    blob = STORAGE_CLIENT.bucket(DATA_BUCKET).get_blob(f'models/{pretrained_model}')
-                    obj_metadata = blob.metadata
+                    #blob = STORAGE_CLIENT.bucket(DATA_BUCKET).get_blob(f'models/{pretrained_model}')
+                    #obj_metadata = blob.metadata
 
                     #make metadata a list if it's not already for easier assumptions.
 
@@ -1293,13 +1245,7 @@ def model_run_event(n_clicks,mode,pretrained_model,pretrained_model_metadata,app
 
                     LOGGER_MANUAL.info(f"{session_id} Preprocessing and formatting data (rid: {run_id[:6]}...)")
 
-
-
-                    print(model_metadata[-1]['scaler'])
-
                     formatted_data, metadata, data_hashes = format_data(data, filter_CHOICE=model_metadata[-1]['filter'],scaler=model_metadata[-1]['scaler'], splitvec=[0, 0] if mode == "Inference" else splitvec,interp_minmaxstep=interp,add_scale=True if mode == "Fine-tuning" else False)
-
-                    print('got to here1.5')
 
                 if mode == "Inference":
 
@@ -1318,9 +1264,6 @@ def model_run_event(n_clicks,mode,pretrained_model,pretrained_model_metadata,app
                         seed_value=config_dict["params_dict"].get('seed'),
                         epochs=config_dict["params_dict"].get('epoch', 30),
                         callbacks = callbacks)
-
-                    #import code
-                   # code.interact(local=dict(globals(), **locals()))
 
                     metadata.update({'model_col_names': training_outputs["model_col_names"],
                                      'data_hashes': [{a: b} for (a, b) in zip(datasets, data_hashes)]})
@@ -1344,23 +1287,35 @@ def model_run_event(n_clicks,mode,pretrained_model,pretrained_model_metadata,app
                     blob = STORAGE_CLIENT.bucket(TMP_BUCKET).blob(model_path)
                     blob.upload_from_file(zipdest)
 
-                combined_data['predictions'] = predictions
+                    LOGGER_MANUAL.info(f"{session_id} Staging model object (rid: {run_id[:6]}...)")
+
+                combined_data['age_predictions_untransformed'] = predictions
+
+                #merge combined with formatted.
+                #import code
+                #code.interact(local=dict(globals(), **locals()))
+
+                formatted_data = combined_data.merge(formatted_data, how='inner', on=IDNAME)
+
+                formatted_data = formatted_data.rename({"age":"transformed_age"})
+
+                LOGGER_MANUAL.info(f"{session_id} Calculating output statistics and writing artifacts (rid: {run_id[:6]}...)")
 
                 #if training data exists, produce training artifacts.
                 if stats['training']['nrow']>0 or stats['validation']['nrow']>0 or stats['test']['nrow']>0:
 
-                    combined_data['split'] = formatted_data['split']
+                    #combined_data['split'] = formatted_data['split']
 
                     #depending on if there are multiple in split, use that or data source  as color.
-                    if (len(combined_data['split'].unique())>1):
+                    if (len(formatted_data['split'].unique())>1):
                         color_field = 'split'
                     else:
                         color_field = 'dataset_name'
 
-                    fig = px.scatter(combined_data,x='age',y='predictions',color=color_field,
-                    labels={"age":"True Values","predictions":"Predicted Values"},template="plotly")
+                    fig = px.scatter(formatted_data,x='ages_untransformed',y='age_predictions_untransformed',color=color_field,
+                    labels={"ages_untransformed":"True Values","age_predictions_untransformed":"Predicted Values"},template="plotly")
 
-                    fig.add_shape(type="line",x0=combined_data["age"].min(),y0=combined_data["age"].min(),x1=combined_data["age"].max(),y1=combined_data["age"].max(),
+                    fig.add_shape(type="line",x0=formatted_data["ages_untransformed"].min(),y0=formatted_data["ages_untransformed"].min(),x1=formatted_data["ages_untransformed"].max(),y1=formatted_data["ages_untransformed"].max(),
                                   line=dict(color="Black",dash="dash"),name="Perfect Prediction")
 
                     artifacts.append([html.Div(id='truth-vs-pred', style={'textAlign': 'left'}, children=f"Predicted vs. Truth Values by {color_field}:"),dcc.Graph(id="truth-vs-pred-figure",figure=fig)])
@@ -1383,9 +1338,11 @@ def model_run_event(n_clicks,mode,pretrained_model,pretrained_model_metadata,app
 
                 config_out_payload = config_out_children
 
-                #may want to make these better outputs.
-                data_out.append(combined_data.to_dict())
-                data_out.append(formatted_data.to_dict())
+
+                #taking a long time for larger datasets...
+                LOGGER_MANUAL.info(f"{session_id} Staging component datasets (rid: {run_id[:6]}...)")
+
+                STORAGE_CLIENT.bucket(TMP_BUCKET).blob(f"ml_formatted_data_plus_untransformed_ages_{run_id}.csv").upload_from_string(formatted_data.to_csv(index=False)) #, 'text/csv'
 
             except Exception as e:
                 message = "Run Failed: error while processing algorithm"
@@ -1393,15 +1350,14 @@ def model_run_event(n_clicks,mode,pretrained_model,pretrained_model_metadata,app
                 processing_fail = True
                 stats = {}
                 artifacts = []
-                data_out = None
 
         download_out = [html.Div([html.Button("Download Results", id="btn-download-results"),
                     dcc.Download(id="download-results")]) if not (processing_fail or any_error) else ""]
 
         artifacts_out = [html.Div([x for xs in artifacts for x in xs],style={'textAlign': 'left', 'vertical-align': 'top'})]
 
-        #import code
-        #code.interact(local=dict(globals(), **locals()))
+        LOGGER_MANUAL.info(f"{session_id} Formatting stats (rid: {run_id[:6]}...)")
+
         stats_table = pd.DataFrame.from_dict(stats,orient='index')
 
         stats_table = stats_table.reset_index().rename(columns={'index':'split'})
@@ -1416,9 +1372,12 @@ def model_run_event(n_clicks,mode,pretrained_model,pretrained_model_metadata,app
                             dash_table.DataTable(stats_table.to_dict('records'),[{"name": i, "id": i} for i in stats_table.columns]), #stats
                         ],style={'textAlign': 'left', 'vertical-align': 'top'}) if not (processing_fail or any_error) else ""])]
 
+        LOGGER_MANUAL.info(f"{session_id} Serializing data (rid: {run_id[:6]}...)")
+
+
         return [processing_fail,ds_fail,model_fail,message,config_out_payload,stats_present,artifacts_out,download_out,\
                 html.Button("Upload Trained model", id="btn-upload-pretrained") if mode != "Inference" and not (processing_fail or any_error) else "",\
-                params_dict if not (processing_fail or any_error) else "",run_id,stats_table.to_json(),json.dumps(data_out),config_table,False] #last none should be stats table
+                params_dict if not (processing_fail or any_error) else "",run_id,stats_table.to_json(),config_table,False] #json.dumps(data_out)
 
 @callback(Output('train_val',"children"),
                 Output('val_val',"children"),
@@ -1514,7 +1473,6 @@ def get_approach_parameters(mode,approach):
     approach = approach['value']
 
     if mode == 'Training' and approach is not None:
-        print("in here")
         return  [html.H4(approach),TRAINING_APPROACHES[approach]["dash_params"] if "dash_params" in TRAINING_APPROACHES[approach] else None]
 
 @callback(
@@ -1579,7 +1537,6 @@ def datasets_to_gcp(filename,contents,data_metadata_dict):
             valid, message,data,metadata = data_check_datasets(i,load_data=True)
 
             if valid:
-                print('uploading')
 
                 #todo: loop through metadata for existing datasets to make sure a dataset of the same hash doesn't already exist
                 #todo: or, display hash to user along with other ds metadata
@@ -1598,7 +1555,7 @@ def datasets_to_gcp(filename,contents,data_metadata_dict):
                 #pulled
 
                 if i[0] in data_metadata_dict:
-                    print('clearing data_metadata_dict on reupload')
+                    #clearing data_metadata_dict on reupload
                     del data_metadata_dict[i[0]]
 
                 message = ""
@@ -1615,8 +1572,7 @@ def datasets_to_gcp(filename,contents,data_metadata_dict):
 
 @callback(
     Output("model-upload-from-session-success", "is_open"),
-    Output("model-upload-from-session-failure", "is_open"),
-    Output("model-name-and-description", "data"),
+    Output("model-name-failure", "is_open"),
     Input('btn-upload-pretrained', 'n_clicks'),
     State('run-name',"value"),
     State('description', "value"),
@@ -1627,41 +1583,44 @@ def trained_model_publish(n_clicks,run_name,description,run_id):
     #later may want to define try / or failure condition
 
     if n_clicks is not None:
-        if run_name is None:
-            return False,True,{}
+        if run_name is None or run_name == "":
+            return False,True
         # TODO check for unique
         #TODO check for disallowed characters
         elif False:
             pass
 
         #DL and unpack model and metadata.
-        tmp_model_path = f"trained_model_{run_id}.keras.zip"
-        tmp_model_name = f"trained_model_{run_id}.keras.zip"
-        model_name = f"{run_name}.keras.zip"
-        model_path = f'models/{model_name}'
-
-        model, metadata, _ = extract_model(STORAGE_CLIENT.bucket(TMP_BUCKET).blob(tmp_model_path).download_as_bytes(), tmp_model_name,upload_to_gcp=False)
-
-        #append description
-        if isinstance(metadata,list):
-            metadata[-1].update({"description":description})
-        else:
-            metadata.update({"description": description})
-
-        zipdest = packModelWithMetadata(model, model_name, metadata=None,
-                                        previous_metadata=metadata,
-                                        mandate_some_metadata_fields=False)
+        zipdest,metadata = attach_description_model(run_id,run_name,description)
 
         #pack it back up and write it.
+        model_path = f'models/{run_name}.keras.zip'
 
         blob = STORAGE_CLIENT.bucket(DATA_BUCKET).blob(model_path)
         blob.upload_from_file(zipdest)
 
-        print(metadata)
-
         attach_model_metadata_gcp_obj(metadata, blob)
 
-        return True,False,{"model_name":model_name,"description":description}
+        return True,False
+
+def attach_description_model(run_id,run_name,description):
+    tmp_model_path = f"trained_model_{run_id}.keras.zip"
+    model_name = f"{run_name}.keras.zip"
+
+    model, metadata, _ = extract_model(STORAGE_CLIENT.bucket(TMP_BUCKET).blob(tmp_model_path).download_as_bytes(),
+                                       tmp_model_path, upload_to_gcp=False)
+
+    # append description
+    if isinstance(metadata, list):
+        metadata[-1].update({"description": description})
+    else:
+        metadata.update({"description": description})
+
+    zipdest = packModelWithMetadata(model, model_name, metadata=None,
+                                    previous_metadata=metadata,
+                                    mandate_some_metadata_fields=False)
+
+    return zipdest,metadata
 
 @callback(
     Output("alert-model-success", "is_open"),
@@ -1779,14 +1738,11 @@ def data_check_datasets(file,load_data = True):
         #for i in datasets]
         #ds_hash = hash_dataset
 
-        #print("loaded")
-
-
 
         data = io.StringIO(decoded.decode('utf-8'))
 
         # check that the dataset does not contain duplicated columns. pd automatically renames duplicate columns so cannot do this
-        print('checking duplicate column names')
+        #checking duplicate column names
         reader = csv.reader(data)
         columns = next(reader)
 
@@ -1897,46 +1853,4 @@ def data_check_models(file,load_model):
 
     return valid,message,decoded if load_model else None,metadata
 
-    #check that it has the essential metadata fields
-
-def run_model(mode,model,datasets,run_id):
-
-    start = time.time()
-
-    if mode == 'Inference':
-
-        data = [[rand.randint(1,15) for i in range(100)]]
-        titles = ['Data: Ages'] #go.Scatter(x=list(range(len(data))), y=data)
-        graphs = [html.Div(id='figure-title', style={'textAlign': 'left'}, children=titles[0]),dcc.Graph(id='figure',figure = go.Figure(data=[go.Histogram(x=data[0])]).update_layout(margin=dict(l=20, r=20, t=20, b=20)))]
-
-        #question- show dynamic graphs or pngs? probably depends on real artifacts
-
-        stats = {'max_cpu_used':[rand.randint(0,100)],'max_memory_used':[rand.randint(0,256)],'time_elapsed':["{:.2f}".format(time.time() - start)]}
-
-    else:
-        data = [[[1,2,3],[1,0.97,0.2]]]
-        titles = ['Data: Performance curve']
-        graphs = [html.Div(id='figure-title', style={'textAlign': 'left'}, children=titles[0]),dcc.Graph(id='figure',figure = go.Figure(data=[go.Scatter(x=data[0][0], y=data[0][1])]).update_layout(margin=dict(l=20, r=20, t=20, b=20)))]
-        stats = {'Accuracy':["{:.2f}".format(rand.randint(0,100)/100)],'Recall':["{:.2f}".format(rand.randint(0,100)/100)],'AUC':["{:.2f}".format(rand.randint(0,100)/100)],'time_elapsed':["{:.2f}".format(time.time() - start)]}
-
-        #write out model object
-        #observation- be careful with lifecycle. Object is written to temp data, but for longer running jobs need to make sure the object
-        #will not be cycled from temp data prior to publication.
-        blob = STORAGE_CLIENT.bucket(TMP_BUCKET).blob(f"trained_model_{run_id}.hd5")
-        blob.upload_from_string(pd.DataFrame([1,2,3]).to_csv(), 'text/csv')
-
-    stats_table = pd.DataFrame.from_dict(stats)
-
-    # write out data, artifacts, stats_table to tmp files
-    blob = STORAGE_CLIENT.bucket(TMP_BUCKET).blob(f'stats_{run_id}.csv')
-    blob.upload_from_string(stats_table.to_csv(), 'text/csv')
-
-    artifacts = [html.Div(id='figure-area', children=graphs)]
-
-    #save plot data to tmp files
-    for i in range(len(titles)):
-        blob = STORAGE_CLIENT.bucket(TMP_BUCKET).blob(f"{titles[i]}_{run_id}.txt")
-        blob.upload_from_string(pd.DataFrame(data[i]).to_csv(), 'text/csv')
-
-    return data, artifacts, stats_table, titles
 
