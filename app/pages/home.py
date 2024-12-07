@@ -1119,7 +1119,12 @@ def model_run_event(n_clicks,mode,pretrained_model,pretrained_model_metadata,app
 
                     data.append(single_dataset)
 
-                    single_dataset_minimal = single_dataset[[IDNAME,RESPONSENAME]]
+                    if RESPONSENAME in single_dataset.columns:
+                        minimal_cols = [IDNAME,RESPONSENAME]
+                    else:
+                        minimal_cols = [IDNAME]
+
+                    single_dataset_minimal = single_dataset[minimal_cols]
 
                     single_dataset_minimal['dataset_name'] = m
                     single_dataset_minimal['dataset_hash'] = ds_hash
@@ -1168,7 +1173,6 @@ def model_run_event(n_clicks,mode,pretrained_model,pretrained_model_metadata,app
                     data = [i.drop(columns=drop_cols, errors="ignore") for i in data]
                 else:
                     data = data.drop(columns=drop_cols, errors="ignore") #need to ignore errors as sometimes data_pane_vals_dict provides columns only present in pretrained model, not dataset.
-
 
                 if mode == 'Training':
 
@@ -1296,8 +1300,8 @@ def model_run_event(n_clicks,mode,pretrained_model,pretrained_model_metadata,app
                 #code.interact(local=dict(globals(), **locals()))
 
                 formatted_data = combined_data.merge(formatted_data, how='inner', on=IDNAME)
-
-                formatted_data = formatted_data.rename({"age":"transformed_age"})
+                if RESPONSENAME in formatted_data.columns:
+                    formatted_data = formatted_data.rename({RESPONSENAME:"transformed_age"})
 
                 LOGGER_MANUAL.info(f"{session_id} Calculating output statistics and writing artifacts (rid: {run_id[:6]}...)")
 
