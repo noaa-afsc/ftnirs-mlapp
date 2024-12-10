@@ -266,10 +266,8 @@ layout = html.Div(id='parent', children=[
         ],style={'height':top_row_max_height,"paddingTop":header_height}),html.Hr(), #style={'marginBottom': 60}
     html.Div(id='middle_row',children=[
         dcc.Markdown(id='manual-log-holder',style={'textAlign': 'left','vertical-align': 'top','width': left_col_width,'maxHeight':100,'height': 100,"display": "inline-block",'overflowY':'auto'}),
-        html.Div(
-            [
-                html.Button('RUN',id="run-button",style={"font-weight": 900,"width":100,"height":100}),
-                dcc.Loading(id='run-message',children=[])
+        html.Div([dcc.Loading(id='run-button-block',children=[html.Button([html.Div(id='run-message',children='RUN')],id="run-button",style={"font-weight": 900,"width":100,"height":100})]),
+                html.Div([html.Div(id='run-message2',children='')])
             ], style={'textAlign': 'center','vertical-align': 'top',"width":middle_col_width,"display": "inline-block"}),
         dcc.Markdown(id='redirect-log-holder',style={'textAlign': 'left','vertical-align': 'top','width': left_col_width,'maxHeight':100,'height': 100,"display": "inline-block",'overflowY':'auto'}),
         ],style={"display": "inline-block","width":"100%"}),html.Hr(style={'marginBottom': 40}), #,'marginLeft': 650
@@ -286,7 +284,6 @@ html.Div(
             ],style={"display": "inline-block",'vertical-align': 'top','textAlign': 'center','marginRight': horizontal_pane_margin,'width': middle_col_width, 'marginRight': horizontal_pane_margin}),
         html.Div(
                 [
-
                     html.Div(id = "download-out"),
                     html.Div(id = "upload-out")
                 ],style={"display": "inline-block",'vertical-align': 'top','width':right_col_width})
@@ -919,15 +916,14 @@ def unpack_data_pane_values_extra(out_dict,children):
 
 #in future, try to get dash 'long callback' working instead of using this.
 #@callback(
-#    Output('run-button', 'disabled', allow_duplicate=True),
-#    Input('run-button', 'n_clicks'),
-#prevent_initial_call=True
+#    Output('run-message2', 'children', allow_duplicate=True),
+#    Input('run-button', 'n_clicks'),prevent_initial_call=True
 #)
-#def temp_disable_button(n_clicks):
-#    if n_clicks is not None:
+#def update_button_message(n_clicks):
+#    if n_clicks is None:
 #        pass
 #    else:
-#        return True
+#        return "Run in progress"
 
 #considering: make instead of reading from params dict, have it loop through different blocks
 #and populate the params dict here. f
@@ -935,6 +931,7 @@ def unpack_data_pane_values_extra(out_dict,children):
     Output('alert-model-run-processing-fail','is_open'),
     Output('alert-model-run-ds-fail','is_open'),
     Output('alert-model-run-models-fail','is_open'),
+    Output('run-message2', 'children', allow_duplicate=True),
     Output('run-message', 'children'),
     Output('config-report', 'children'),
     Output('stats-out', 'children'),
@@ -946,7 +943,6 @@ def unpack_data_pane_values_extra(out_dict,children):
     Output("modelrun_stats", "data"),
     #Output("modelrun_data", "data"),
     Output("config_table", "data"),
-    Output('run-button', 'disabled', allow_duplicate=True),
     Input('run-button', 'n_clicks'),
     State('mode-select', 'value'),
     State('pretrained_value_dict', 'data'),
@@ -961,8 +957,9 @@ def unpack_data_pane_values_extra(out_dict,children):
     #(Output("run-button", "disabled"), True, False),
     #],
     prevent_initial_call=True,
-    #background = True #todo this is returning pickle/diskcache error trying to run as background task. Confirmed that nothing in the callback python function itself is causing the error
-    #todo Next, try to run a simpler background task to see if the libraries and background are at least correctly configured.
+    #background = True #todo this is returning pickle/diskcache error trying to run as background task. Issue is with gcp client connection in global
+    #other (larger) issue: background task requires a new call to load each page every time it is run. This means it reruns tensorflow, which is
+    #a pretty terrible penalty.
  )
 def model_run_event(n_clicks,mode,pretrained_model,pretrained_model_metadata,approach,columns,datasets,params_holder,session_id,data_metadata):
 
@@ -986,6 +983,7 @@ def model_run_event(n_clicks,mode,pretrained_model,pretrained_model_metadata,app
         data_out, artifacts, stats, config_table = [], [], [], None
 
         any_error = False
+        print(datasets)
 
         if len(datasets)==0:
 
@@ -1020,17 +1018,17 @@ def model_run_event(n_clicks,mode,pretrained_model,pretrained_model_metadata,app
             any_error = True
             config_out_payload = []
 
-        if not data_pane_vals_dict[WN_STRING_NAME]['selected']:
+        #if not data_pane_vals_dict[WN_STRING_NAME]['selected']:
 
-            if any_error:
-                message = message + f" & data error: no valid {WN_STRING_NAME} for operation"
-            else:
-                message = message + f"data error: no valid {WN_STRING_NAME} for operation"
+        #    if any_error:
+        #        message = message + f" & data error: no valid {WN_STRING_NAME} for operation"
+        #    else:
+        #        message = message + f"data error: no valid {WN_STRING_NAME} for operation"
 
-            ds_fail = True
+        #    ds_fail = True
 
-            any_error = True
-            config_out_payload = []
+        #    any_error = True
+        #    config_out_payload = []
 
         run_id = ""  # set default so if it errors out, still can return outputs
         if not any_error:
@@ -1342,7 +1340,6 @@ def model_run_event(n_clicks,mode,pretrained_model,pretrained_model_metadata,app
 
                 config_out_payload = config_out_children
 
-
                 #taking a long time for larger datasets...
                 LOGGER_MANUAL.info(f"{session_id} Staging component datasets (rid: {run_id[:6]}...)")
 
@@ -1355,8 +1352,10 @@ def model_run_event(n_clicks,mode,pretrained_model,pretrained_model_metadata,app
                 stats = {}
                 artifacts = []
 
-        download_out = [html.Div([html.Button("Download Results", id="btn-download-results"),
-                    dcc.Download(id="download-results")]) if not (processing_fail or any_error) else ""]
+        download_out = [html.Div([dcc.Loading(id='dl-loading',children=[html.Button("Download Results",id="btn-download-results"),
+                                              dcc.Download(id="download-results")])]) if not (processing_fail or any_error) else ""]
+
+        upload_out = [html.Div([dcc.Loading(id='up-loading',children=[html.Button(html.Div(id="btn-message",children="Upload Trained model"),id="btn-upload-pretrained")])]) if not (processing_fail or any_error) else ""]
 
         artifacts_out = [html.Div([x for xs in artifacts for x in xs],style={'textAlign': 'left', 'vertical-align': 'top'})]
 
@@ -1378,10 +1377,8 @@ def model_run_event(n_clicks,mode,pretrained_model,pretrained_model_metadata,app
 
         LOGGER_MANUAL.info(f"{session_id} Serializing data (rid: {run_id[:6]}...)")
 
-
-        return [processing_fail,ds_fail,model_fail,message,config_out_payload,stats_present,artifacts_out,download_out,\
-                html.Button("Upload Trained model", id="btn-upload-pretrained") if mode != "Inference" and not (processing_fail or any_error) else "",\
-                params_dict if not (processing_fail or any_error) else "",run_id,stats_table.to_json(),config_table,False] #json.dumps(data_out)
+        return [processing_fail,ds_fail,model_fail,message,"RUN",config_out_payload,stats_present,artifacts_out,download_out,\
+                upload_out,params_dict if not (processing_fail or any_error) else "",run_id,stats_table.to_json(),config_table] #json.dumps(data_out)
 
 @callback(Output('train_val',"children"),
                 Output('val_val',"children"),
@@ -1577,6 +1574,7 @@ def datasets_to_gcp(filename,contents,data_metadata_dict):
 @callback(
     Output("model-upload-from-session-success", "is_open"),
     Output("model-name-failure", "is_open"),
+    Output("btn-message", "children"),
     Input('btn-upload-pretrained', 'n_clicks'),
     State('run-name',"value"),
     State('description', "value"),
@@ -1588,7 +1586,7 @@ def trained_model_publish(n_clicks,run_name,description,run_id):
 
     if n_clicks is not None:
         if run_name is None or run_name == "":
-            return False,True
+            return False,True,"UPLOAD TRAINED MODEL"
         # TODO check for unique
         #TODO check for disallowed characters
         elif False:
@@ -1605,7 +1603,7 @@ def trained_model_publish(n_clicks,run_name,description,run_id):
 
         attach_model_metadata_gcp_obj(metadata, blob)
 
-        return True,False
+        return True,False,"UPLOAD TRAINED MODEL"
 
 def attach_description_model(run_id,run_name,description):
     tmp_model_path = f"trained_model_{run_id}.keras.zip"
