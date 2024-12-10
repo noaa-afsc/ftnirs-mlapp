@@ -40,8 +40,10 @@ class EpochCounterCallback(tk_callbacks):
         self.session_id = session_id
         self.logger = logger
         self.run_id = run_id
-    def on_epoch_begin(self, epoch, logs=None):
-        self.logger.debug(f"{self.session_id} Current Epoch: {epoch+1} (rid: {self.run_id[:6]}...)")
+    #def on_epoch_begin(self, epoch, logs=None):
+    #    self.logger.debug(f"{self.session_id} Current Epoch: {epoch+1} (rid: {self.run_id[:6]}...)")
+    def on_epoch_end(self, epoch, logs):
+        self.logger.debug('{"session_id":"'+str(self.session_id)+'", "run_id":'+str(self.run_id) +', "epoch":'+str(epoch+1) + ', "val_loss":'+str(logs['val_loss'])+', "loss":'+str(logs['loss']) +"}")
 
 load_dotenv('../tmp/.env')
 
@@ -315,12 +317,18 @@ def update_logs(n_intervals,data):
         manual = "\>"+"\n\>".join(manual) +"\n"
 
     with (open('session_logs.log', 'r') as log_file):
+
+        redirect =[json.loads("{" + line.split("{")[1][:-1]) for line in log_file if (data in line and line[26:31] == 'DEBUG' and abs((datetime.strptime(line[0:19],"%Y-%m-%d %H:%M:%S")-datetime.now())) < timedelta(hours=1))]
+
+        #todo pick up here
         #import code
         #code.interact(local=dict(globals(), **locals()))
-        redirect =[line[:19]+" "+line[70:] for line in log_file if (data in line and line[26:31] == 'DEBUG' and abs((datetime.strptime(line[0:19],"%Y-%m-%d %H:%M:%S")-datetime.now())) < timedelta(days=1))]
-
 
     if len(redirect)>0:
+        # now that duplicate calls of run are disabled, there will be a max of 1 run_id per session id. So, we can
+        run_id = redirect[-1]['run_id']
+
+
         redirect = redirect[-100:]
         redirect = list(reversed(redirect))
         redirect = "\>" + "\n\>".join(redirect) + "\n"
