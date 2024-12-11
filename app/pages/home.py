@@ -234,7 +234,7 @@ layout = html.Div(id='parent', children=[
                                      options=["Training", "Inference", "Fine-tuning"],style={'width': 200}), #
                         html.Div(id='mode-select-output', style={'textAlign': 'left'}),
                         html.Div(id = "approaches-holder"),
-                        html.Div(id = "pretrained-holder")], style={'vertical-align': 'top', 'textAlign': 'center','height': 375,'maxHeight': 375,"overflowY":'auto','width':left_body_width})])
+                        html.Div(id = "pretrained-holder")], style={'vertical-align': 'top', 'textAlign': 'center','height': 390,'maxHeight': 390,"overflowY":'auto','width':left_body_width})])
                 ],style={"display": "inline-block",'marginRight': horizontal_pane_margin,'height': top_row_max_height, 'width': left_col_width}),
         #,style={"display": "inline-block",'marginRight': horizontal_pane_margin,'height': top_row_max_height, 'width': left_col_width}),
 
@@ -242,7 +242,7 @@ layout = html.Div(id='parent', children=[
             [
                 html.H2(children='Data Columns',
                         style={'textAlign': 'center','height':H2_height,'marginBelow':H2_height_below_padding}),
-                html.Div(id="data-pane",style={'height':top_row_max_height-H2_height-5,'maxHeight':top_row_max_height-H2_height-5,'overflowY':'auto'})
+                html.Div(id="data-pane",style={'height':top_row_max_height-H2_height-35,'maxHeight':top_row_max_height-H2_height-35,'overflowY':'auto'})
             ], style={"display": "inline-block", 'vertical-align': 'top', 'textAlign': 'left','marginRight': horizontal_pane_margin,'width': middle_col_width,'height':top_row_max_height,'maxHeight':top_row_max_height}), #,
         #html.H2(id='H2_3', children='Select Parameters',
         #                    style={'textAlign': 'center', 'marginTop': 20, 'height':H2_height,'marginBelow':H2_height_below_padding}),
@@ -263,7 +263,7 @@ layout = html.Div(id='parent', children=[
                     html.Div(id='interp_holder',children=interp_children_choose)],style={"width": "50%"}),
                     html.Div(id='mode_params',children=[]),
                     html.Div(id="approach_params")
-                ],style={'height':top_row_max_height-H2_height-5,'maxHeight':top_row_max_height-H2_height-5,'overflowY':'auto'}),
+                ],style={'height':top_row_max_height-H2_height-15,'maxHeight':top_row_max_height-H2_height-15,'overflowY':'auto'}),
             ],style ={"display": "inline-block",'vertical-align': 'top','textAlign': 'left','width':right_col_width,'height':top_row_max_height}), #'maxHeight':top_row_max_height
         ],style={'height':top_row_max_height,"paddingTop":header_height}),html.Hr(), #style={'marginBottom': 60}
     html.Div(id='middle_row',children=[
