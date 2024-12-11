@@ -9,5 +9,6 @@ cache/*
 rotate ftnirsml dep.txt
 gitsemantic.txt
 app/session_logs.log
+app/session_logs.log.1
 app/cache2/*
 app/cache2/cache.db

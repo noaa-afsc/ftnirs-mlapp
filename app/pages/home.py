@@ -43,7 +43,7 @@ class EpochCounterCallback(tk_callbacks):
     #def on_epoch_begin(self, epoch, logs=None):
     #    self.logger.debug(f"{self.session_id} Current Epoch: {epoch+1} (rid: {self.run_id[:6]}...)")
     def on_epoch_end(self, epoch, logs):
-        self.logger.debug('{"session_id":"'+str(self.session_id)+'", "run_id":'+str(self.run_id) +', "epoch":'+str(epoch+1) + ', "val_loss":'+str(logs['val_loss'])+', "loss":'+str(logs['loss']) +"}")
+        self.logger.debug('{"session_id":"'+str(self.session_id)+'", "run_id":"'+str(self.run_id) +'", "epoch":'+str(epoch+1) + ', "val_loss":'+str(logs['val_loss'])+', "loss":'+str(logs['loss']) +"}")
 
 load_dotenv('../tmp/.env')
 
@@ -56,7 +56,7 @@ CACHE = diskcache.Cache("./cache")
 CACHE_EXPIRY = 1 #in days
 
 #set up info level manually triggered logger
-log_handler = RotatingFileHandler("session_logs.log",maxBytes=1*1024*1024)
+log_handler = RotatingFileHandler("session_logs.log",maxBytes=1024*256,backupCount=1) #1*1024*1024
 log_handler.setLevel(logging.DEBUG)
 formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
 log_handler.setFormatter(formatter)
@@ -75,8 +75,6 @@ TMP_BUCKET = os.getenv("TMP_BUCKET")
 
 PRETRAINED_MODEL_METADATA_PARAMS = ["wave_number_min", "wave_number_max", "wave_number_step", "wn_filter", "wn_scaler",
                                   "bio_scaler", "response_scaler"]
-
-
 
 def get_objs():
     objs = list(STORAGE_CLIENT.list_blobs(DATA_BUCKET))
@@ -124,7 +122,7 @@ for i in TRAINING_APPROACHES.keys():
                                      " (default: " + str(TRAINING_APPROACHES[i]["parameters"][m]["default_value"])+")"))
         TRAINING_APPROACHES[i]["dash_params"]=html.Div(obj)
 
-APP_STORAGE_TYPE = 'memory' #memory, session, local
+APP_STORAGE_TYPE = 'session' #memory, session, local
 
 WN_FILTER_DEFAULT,WN_SCALING_DEFAULT,BIO_SCALING_DEFAULT,RESPONSE_SCALING_DEFAULT = 'savgol','MinMaxScaler','MinMaxScaler','MinMaxScaler'
 
@@ -192,7 +190,7 @@ layout = html.Div(id='parent', children=[
                 duration=4000)
         ],style={"position":"fixed","top":header_height+15,"zIndex":999,'width':"100%"}),
     html.Div(id = 'toprow',children=[
-        dcc.Interval(id='interval-component',interval=1*1000, n_intervals=0),
+        dcc.Interval(id='interval-component',interval=1*1500, n_intervals=0), #interval=1*1000
         dcc.Store(id='session-id', storage_type='session', data="session_init"), #see if this can be recoverable, potentially. s
         dcc.Store(id='params_dict', storage_type=APP_STORAGE_TYPE,data = {}),
         dcc.Store(id='data_metadata_dict', storage_type=APP_STORAGE_TYPE,data = {}),
@@ -207,6 +205,8 @@ layout = html.Div(id='parent', children=[
         dcc.Store(id='modelrun_stats', storage_type=APP_STORAGE_TYPE,data = {}),
         dcc.Store(id='modelrun_data', storage_type=APP_STORAGE_TYPE,data = {}),
         dcc.Store(id='config_table', storage_type=APP_STORAGE_TYPE, data={}),
+        dcc.Store(id='vis_data', storage_type=APP_STORAGE_TYPE, data={}),
+        dcc.Store(id='vis_data2', storage_type=APP_STORAGE_TYPE, data={}),
             html.Div(id='left col top row',children=[
             html.Div(id='datasets',children=[
                 html.H2(id='H2_1', children='Select Datasets',
@@ -267,11 +267,11 @@ layout = html.Div(id='parent', children=[
             ],style ={"display": "inline-block",'vertical-align': 'top','textAlign': 'left','width':right_col_width,'height':top_row_max_height}), #'maxHeight':top_row_max_height
         ],style={'height':top_row_max_height,"paddingTop":header_height}),html.Hr(), #style={'marginBottom': 60}
     html.Div(id='middle_row',children=[
-        dcc.Markdown(id='manual-log-holder',style={'textAlign': 'left','vertical-align': 'top','width': left_col_width,'maxHeight':100,'height': 100,"display": "inline-block",'overflowY':'auto'}),
+        dcc.Markdown(id='manual-log-holder',style={'textAlign': 'left','vertical-align': 'top','width': left_col_width,'maxHeight':200,'height': 200,"display": "inline-block",'overflowY':'auto'}),
         html.Div([dcc.Loading(id='run-button-block',children=[html.Button([html.Div(id='run-message',children='RUN')],id="run-button",style={"font-weight": 900,"width":100,"height":100})]),
                 html.Div([html.Div(id='run-message2',children='')])
             ], style={'textAlign': 'center','vertical-align': 'top',"width":middle_col_width,"display": "inline-block"}),
-        dcc.Markdown(id='redirect-log-holder',style={'textAlign': 'left','vertical-align': 'top','width': left_col_width,'maxHeight':100,'height': 100,"display": "inline-block",'overflowY':'auto'}),
+        dcc.Graph(id='progress_vis',figure=go.Figure().update_layout(plot_bgcolor="white").update_xaxes(showticklabels=False).update_yaxes(showticklabels=False),style={'textAlign': 'left','vertical-align': 'top','width': left_col_width,'maxHeight':200,'height': 200,"display": "inline-block"}), #,figure=None , 'maxHeight':100,'height': 100
         ],style={"display": "inline-block","width":"100%"}),html.Hr(style={'marginBottom': 40}), #,'marginLeft': 650
 html.Div(
         [
@@ -293,23 +293,59 @@ html.Div(
 
 ])
 
+@callback(Output('progress_vis', "figure"),
+          Input("vis_data2","data"))
+def update_progress_vis(data):
+
+    if data == {}:
+        raise dash.exceptions.PreventUpdate()
+    else:
+
+        #make the plot.
+        figure = go.Figure()
+        epochs = len(data['loss'])+1 #don't use epochs, since some can be missed due to use of interval component (fix?)
+
+        figure.add_trace(go.Scatter(x=list(range(1,epochs)),y=data['loss'], mode='lines+markers',name='Loss'))
+        figure.add_trace(go.Scatter(x=list(range(1, epochs)), y=data['val_loss'], mode='lines+markers', name = 'Val Loss'))
+
+        figure.update_layout(title={"text":f"Run id: {data['run_id'][:6]}.. Round: {str(data['round'])}","x":0.5,"y":0.9},xaxis_title="Epochs",yaxis_title="Loss",
+                             legend_title="metrics",plot_bgcolor="white",margin={"l":0,"r":0,"t":0,"b":0})
+
+        return figure
+
+@callback(Output('vis_data2', "data"),
+          Input("vis_data","data"),
+          State('vis_data2', "data"))
+def check_data_update_filter(current_data,before_data):
+
+    if current_data == before_data:
+        raise dash.exceptions.PreventUpdate()
+    else:
+        return current_data
+
+
 @callback(Output('manual-log-holder',"children"),
-          Output('redirect-log-holder', "children"),
+          Output('vis_data', "data"),
           Output("session-id", "data"),
+          Output("current-jobs", "children"),
           Input("interval-component",'n_intervals'),
-          State("session-id", "data"))
-def update_logs(n_intervals,data):
+          State("session-id", "data"),
+          State("vis_data", "data"))
+def update_logs(n_intervals,session_data,before_vis_data):
+
+    out_data = before_vis_data
+    current_unique_sessions=0
 
     #assign a new session a uuid4
-    if data=="session_init":
-        data = str(uuid.uuid4())
+    if session_data=="session_init":
+        session_data = str(uuid.uuid4())
 
     #read the log entries from the last second and populate
     with open('session_logs.log','r') as log_file:
 
         #import code
         #code.interact(local=dict(globals(), **locals()))
-        manual = [line[:19]+" "+line[70:] for line in log_file if (data in line and line[26:30] == 'INFO' and abs((datetime.strptime(line[0:19],"%Y-%m-%d %H:%M:%S")-datetime.now())) < timedelta(days=1))]
+        manual = [line[:19]+" "+line[70:] for line in log_file if (session_data in line and line[26:30] == 'INFO' and abs((datetime.strptime(line[0:19],"%Y-%m-%d %H:%M:%S")-datetime.now())) < timedelta(days=1))]
 
     if len(manual) > 0:
         manual = manual[-100:]
@@ -318,22 +354,69 @@ def update_logs(n_intervals,data):
 
     with (open('session_logs.log', 'r') as log_file):
 
-        redirect =[json.loads("{" + line.split("{")[1][:-1]) for line in log_file if (data in line and line[26:31] == 'DEBUG' and abs((datetime.strptime(line[0:19],"%Y-%m-%d %H:%M:%S")-datetime.now())) < timedelta(hours=1))]
+        all_recent_vis =[json.loads("{" + line.split("{")[1][:-1]) for line in log_file if (line[26:31] == 'DEBUG' and abs((datetime.strptime(line[0:19],"%Y-%m-%d %H:%M:%S")-datetime.now())) < timedelta(seconds=20))]
 
-        #todo pick up here
-        #import code
-        #code.interact(local=dict(globals(), **locals()))
+    if len(all_recent_vis)>0:
 
-    if len(redirect)>0:
-        # now that duplicate calls of run are disabled, there will be a max of 1 run_id per session id. So, we can
-        run_id = redirect[-1]['run_id']
+        #see how many active sessions:
+        current_unique_sessions = len(list(set([i['session_id'] for i in all_recent_vis])))
 
+        #filter to the current session.
 
-        redirect = redirect[-100:]
-        redirect = list(reversed(redirect))
-        redirect = "\>" + "\n\>".join(redirect) + "\n"
+        all_recent_vis_current_session = [i for i in all_recent_vis if i['session_id'] == session_data]
 
-    return manual,redirect,data
+        if len(all_recent_vis_current_session)>0:
+            # now that duplicate calls of run are disabled, there will be a max of 1 run_id per session id. So, we can assume latest is the only current run.
+            cur_data = all_recent_vis_current_session[-1]
+
+            #test for any changes:
+            if before_vis_data !=cur_data:
+
+                if before_vis_data.get('run_id')==cur_data['run_id']:
+
+                    #append
+                    out_data={}
+
+                    do_append = True
+
+                    #check if epoch dropped, and if so increment round. make sure to account for continued comparisons after work.
+                    if cur_data['epoch'] == before_vis_data['epoch']:
+                        if cur_data['loss']!=before_vis_data['loss'][-1]:
+                            out_data['round'] = before_vis_data['round']+1
+                        else:
+                            out_data['round'] = before_vis_data['round']
+                            do_append = False #stop appending in this condition
+                    elif cur_data['epoch'] < before_vis_data['epoch']:
+                        out_data['round'] = before_vis_data['round'] + 1
+                    else:
+                        out_data['round'] = before_vis_data['round']
+
+                    if do_append:
+
+                        epoch_diff = cur_data['epoch'] - before_vis_data['epoch']
+
+                        before_vis_data['loss']= before_vis_data['loss'] + [i['loss'] for i in all_recent_vis_current_session[-epoch_diff:]]
+                        out_data['loss'] =before_vis_data['loss']
+                        before_vis_data['val_loss'] = before_vis_data['val_loss'] +[i['val_loss'] for i in all_recent_vis_current_session[-epoch_diff:]]
+                        out_data['val_loss'] = before_vis_data['val_loss']
+                        out_data['epoch'] =cur_data['epoch']
+                        out_data['run_id'] = cur_data['run_id']
+
+                    else:
+                        out_data=before_vis_data
+
+                else:
+
+                    #import code
+                    #code.interact(local=dict(globals(), **locals()))
+
+                    #replace
+                    cur_data['round'] = 1
+                    out_data = cur_data
+                    out_data["loss"] = [i['loss'] for i in all_recent_vis_current_session[-cur_data['epoch']:]]
+                    out_data["val_loss"] = [i['val_loss'] for i in all_recent_vis_current_session[-cur_data['epoch']:]]
+    #print(out_data)
+    return manual,out_data,session_data,f"Concurrent tensorflow jobs: {current_unique_sessions}"
 
 @callback(
     Output('approaches_value_dict', 'data'),
@@ -453,8 +536,7 @@ def present_pretrained_metadata(pretrained_model_metadata_dict,mode,pretrained):
 
             obj = [html.Div(children=[html.Strong(str(a)), html.Span(f": {b}")],
                             style={'marginBottom': 10}) for a,b in pretrained_metadata] #[l for l in pretrained_metadata if l not in PRETRAINED_MODEL_METADATA_PARAMS]]
-            #import code
-            #code.interact(local=dict(globals(), **locals()))
+
             return pretrained_model_metadata_dict[pretrained]["wn_filter"],True,\
                    pretrained_model_metadata_dict[pretrained]["wn_scaler"],True,\
                    pretrained_model_metadata_dict[pretrained]["bio_scaler"],True,\
@@ -562,8 +644,7 @@ def present_columns(data_dict,model_dict,datasets,mode,pretrained_val,approach_v
         # pipe in split to this, if specified in to be created and linked training parameters
         if mode == "Inference":
             pretrained_exclude = [i for i in standard_cols_counter if i not in pretrained_include]
-            #import code
-            #code.interact(local=dict(globals(), **locals()))
+
             if 'bio_columns' in model_dict[pretrained_val]:
 
                 #exclude standard
