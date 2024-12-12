@@ -1310,7 +1310,7 @@ def model_run_event(n_clicks,mode,pretrained_model,pretrained_model_metadata,app
                             seed_value = config_dict["params_dict"].get('seed')
                         )
 
-                    metadata.update({'model_col_names': training_outputs["model_col_names"],
+                    metadata.update({'model_col_names': training_outputs["model_col_names"],'training_history':training_outputs['training_history'],'additional_outputs':additional_outputs,
                                      'data_hashes': [{a: b} for (a, b) in zip(datasets, data_hashes)]})
 
                     zipdest = packModelWithMetadata(model, f"trained_model_{run_id}.keras.zip", metadata=metadata,
