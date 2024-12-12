@@ -147,6 +147,18 @@ layout = html.Div(id='parent', children=[
                 color="danger",
                 duration=4000),
             dbc.Alert(
+                "Run Succeeded!",
+                id="alert-model-run-message-success",
+                is_open=False,
+                color="success",
+                duration=4000),
+            dbc.Alert(
+                "Run Succeeded!",
+                id="alert-model-run-message-fail",
+                is_open=False,
+                color="danger",
+                duration=4000),
+            dbc.Alert(
                 "Model successfully uploaded!",
                 id="alert-model-success",
                 is_open=False,
@@ -268,9 +280,8 @@ layout = html.Div(id='parent', children=[
         ],style={'height':top_row_max_height,"paddingTop":header_height}),html.Hr(), #style={'marginBottom': 60}
     html.Div(id='middle_row',children=[
         dcc.Markdown(id='manual-log-holder',style={'textAlign': 'left','vertical-align': 'top','width': left_col_width,'maxHeight':200,'height': 200,"display": "inline-block",'overflowY':'auto'}),
-        html.Div([dcc.Loading(id='run-button-block',children=[html.Button([html.Div(id='run-message',children='RUN')],id="run-button",style={"font-weight": 900,"width":100,"height":100})]),
-                html.Div([html.Div(id='run-message2',children='')])
-            ], style={'textAlign': 'center','vertical-align': 'top',"width":middle_col_width,"display": "inline-block"}),
+        html.Div([dcc.Loading(id='run-button-block',children=[html.Button([html.Div(id='run-message',children='RUN')],id="run-button",style={"font-weight": 900,"width":100,"height":100})])],
+             style={'textAlign': 'center','vertical-align': 'top',"width":middle_col_width,"display": "inline-block"}),
         dcc.Graph(id='progress_vis',figure=go.Figure().update_layout(plot_bgcolor="white").update_xaxes(showticklabels=False).update_yaxes(showticklabels=False),style={'textAlign': 'left','vertical-align': 'top','width': left_col_width,'maxHeight':200,'height': 200,"display": "inline-block"}), #,figure=None , 'maxHeight':100,'height': 100
         ],style={"display": "inline-block","width":"100%"}),html.Hr(style={'marginBottom': 40}), #,'marginLeft': 650
 html.Div(
@@ -845,11 +856,6 @@ def download_results(n_clicks,run_id,run_name,params_dict,stats,data,config,desc
             info.size = len(obj.getvalue())
             tar.addfile(tarinfo = info,fileobj=obj)
 
-            #config
-            #blob = STORAGE_CLIENT.bucket(TMP_BUCKET).blob(f"config_{run_id}.yml")
-
-            #obj = io.BytesIO(blob.download_as_bytes())
-            #obj.seek(0)
             obj = io.BytesIO(config.encode('utf-8'))
             info = tarfile.TarInfo(name="config.yml")
             info.size = len(obj.getvalue())
@@ -883,13 +889,6 @@ def download_results(n_clicks,run_id,run_name,params_dict,stats,data,config,desc
             info = tarfile.TarInfo(name="ml_formatted_data_plus_untransformed_ages.csv")
             info.size = len(obj.getvalue())
             tar.addfile(tarinfo=info, fileobj=obj)
-
-            #blob = STORAGE_CLIENT.bucket(TMP_BUCKET).blob(f"ml_formatted_data_{run_id}.csv")
-            #obj = io.BytesIO(blob.download_as_bytes())
-            #obj.seek(0)
-            #info = tarfile.TarInfo(name="ml_formatted_data.csv")
-            #info.size = len(obj.getvalue())
-            #tar.addfile(tarinfo=info, fileobj=obj)
 
         tar_stream.seek(0)
 
@@ -1003,24 +1002,15 @@ def unpack_data_pane_values_extra(out_dict,children):
 
     return out_dict
 
-#in future, try to get dash 'long callback' working instead of using this.
-#@callback(
-#    Output('run-message2', 'children', allow_duplicate=True),
-#    Input('run-button', 'n_clicks'),prevent_initial_call=True
-#)
-#def update_button_message(n_clicks):
-#    if n_clicks is None:
-#        pass
-#    else:
-#        return "Run in progress"
-
 #considering: make instead of reading from params dict, have it loop through different blocks
 #and populate the params dict here. f
 @callback(
     Output('alert-model-run-processing-fail','is_open'),
     Output('alert-model-run-ds-fail','is_open'),
     Output('alert-model-run-models-fail','is_open'),
-    Output('run-message2', 'children', allow_duplicate=True),
+    Output('alert-model-run-message-success', 'is_open'),
+    Output('alert-model-run-message-fail', 'children'),
+    #Output('alert-model-run-message-fail', 'is_open'),
     Output('run-message', 'children'),
     Output('config-report', 'children'),
     Output('stats-out', 'children'),
@@ -1141,10 +1131,6 @@ def model_run_event(n_clicks,mode,pretrained_model,pretrained_model_metadata,app
 
                 config_table = config_dict.copy()
                 config_table = json.dumps(config_table,indent=4)
-
-                #don't do this, just save as dcc store.
-                #blob = STORAGE_CLIENT.bucket(TMP_BUCKET).blob(f'config_{run_id}.yml')
-                #blob.upload_from_string(config_table.to_csv(), 'text/csv')
 
                 config_out_children = [html.Div(id='config-body',children=[html.Div(id='run-name-block',children =[html.Div(id='run-name-prompt',children = "Model name:"),
                                         dcc.Input(id='run-name', type="text", placeholder="my_unique_pretrained_model_name",style={'textAlign': 'left', 'vertical-align': 'top','width':"150%"},value=""),
@@ -1319,14 +1305,10 @@ def model_run_event(n_clicks,mode,pretrained_model,pretrained_model_metadata,app
 
                     LOGGER_MANUAL.info(f"{session_id} Finished model training (rid: {run_id[:6]}...)")
 
-                    #attach_model_metadata_gcp_obj(format_metadata,blob) #do this after model save, so that things like description will be applied also.
-
                 else:
                     #for now, decided it's quick + easy to just download object from cloud each  time, can build in caching if that changes.
                     LOGGER_MANUAL.info(f"{session_id} Reading model from cloud (rid: {run_id[:6]}...)")
                     model, model_metadata, _ = extract_model(STORAGE_CLIENT.bucket(DATA_BUCKET).blob(f"models/{pretrained_model}").download_as_bytes(),pretrained_model, upload_to_gcp=False)
-                    #blob = STORAGE_CLIENT.bucket(DATA_BUCKET).get_blob(f'models/{pretrained_model}')
-                    #obj_metadata = blob.metadata
 
                     #make metadata a list if it's not already for easier assumptions.
 
@@ -1440,6 +1422,7 @@ def model_run_event(n_clicks,mode,pretrained_model,pretrained_model_metadata,app
                 processing_fail = True
                 stats = {}
                 artifacts = []
+                any_error = True
 
         download_out = [html.Div([dcc.Loading(id='dl-loading',children=[html.Button("Download Results",id="btn-download-results"),
                                               dcc.Download(id="download-results")])]) if not (processing_fail or any_error) else ""]
@@ -1466,7 +1449,7 @@ def model_run_event(n_clicks,mode,pretrained_model,pretrained_model_metadata,app
 
         LOGGER_MANUAL.info(f"{session_id} Serializing data (rid: {run_id[:6]}...)")
 
-        return [processing_fail,ds_fail,model_fail,message,"RUN",config_out_payload,stats_present,artifacts_out,download_out,\
+        return [processing_fail,ds_fail,model_fail,True if not any_error else False, message,"RUN",config_out_payload,stats_present,artifacts_out,download_out,\
                 upload_out,params_dict if not (processing_fail or any_error) else "",run_id,stats_table.to_json(),config_table] #json.dumps(data_out)
 
 @callback(Output('train_val',"children"),
@@ -1633,22 +1616,26 @@ def datasets_to_gcp(filename,contents,data_metadata_dict):
 
                 blob = STORAGE_CLIENT.bucket(DATA_BUCKET).blob(f'datasets/{i[0]}')
 
-                blob.upload_from_string(data, 'text/csv')
+                if blob.exists():
+                    valid = False
+                    message = "dataset of duplicate name already present"
+                else:
+                    blob.upload_from_string(data, 'text/csv')
 
-                #cache the dataset
+                    #cache the dataset
 
-                CACHE.set(metadata['data_hash'],data,expire= CACHE_EXPIRY * 24 * 60 * 60) #two week expiry
+                    CACHE.set(metadata['data_hash'],data,expire= CACHE_EXPIRY * 24 * 60 * 60) #two week expiry
 
-                attach_metadata_to_blob(metadata,blob)
+                    attach_metadata_to_blob(metadata,blob)
 
-                #if filename is already in data_metadata_dict, clear it so that the contents will be properly
-                #pulled
+                    #if filename is already in data_metadata_dict, clear it so that the contents will be properly
+                    #pulled
 
-                if i[0] in data_metadata_dict:
-                    #clearing data_metadata_dict on reupload
-                    del data_metadata_dict[i[0]]
+                    if i[0] in data_metadata_dict:
+                        #clearing data_metadata_dict on reupload
+                        del data_metadata_dict[i[0]]
 
-                message = ""
+                    message = ""
 
 
             else:
@@ -1663,7 +1650,7 @@ def datasets_to_gcp(filename,contents,data_metadata_dict):
 @callback(
     Output("model-upload-from-session-success", "is_open"),
     Output("model-name-failure", "is_open"),
-    Output("btn-message", "children"),
+    Output("btn-message", "children"), #this is just to trick the dcc.loading() into disabling the button during operation
     Input('btn-upload-pretrained', 'n_clicks'),
     State('run-name',"value"),
     State('description', "value"),
@@ -1688,6 +1675,8 @@ def trained_model_publish(n_clicks,run_name,description,run_id):
         model_path = f'models/{run_name}.keras.zip'
 
         blob = STORAGE_CLIENT.bucket(DATA_BUCKET).blob(model_path)
+        if blob.exists():
+            return False, True, "UPLOAD TRAINED MODEL"
         blob.upload_from_file(zipdest)
 
         attach_model_metadata_gcp_obj(metadata, blob)
@@ -1740,13 +1729,18 @@ def models_to_gcp(filenames, contents):
                 decoded = base64.b64decode(content_string)
 
                 model, metadata,blob = extract_model(decoded,i[0],upload_to_gcp=True)
+                if model is None:
+
+                    message = "model of duplicate name already exists"
+                    success = False
 
                 #attach the full metadata file as a .pickle. Also, attach particular accessory metadata that will
                 #be needed later: all columns used in current model, wn attributes, description... parameter values?
-                if metadata is not None:
-                    attach_model_metadata_gcp_obj(metadata,blob)
                 else:
-                    attach_null_metadata(blob)
+                    if metadata is not None:
+                        attach_model_metadata_gcp_obj(metadata,blob)
+                    else:
+                        attach_null_metadata(blob)
 
             else:
                 success = False
@@ -1801,8 +1795,9 @@ def extract_model(model_zip_bytes,model_zip_name,upload_to_gcp=False):
         temp_zip.write(model_zip_bytes)
         model, metadata = loadModelWithMetadata(temp_zip, model_zip_name[:-4])
         if upload_to_gcp:
+            if blob.exists():
+                return None,None,None
             blob.upload_from_string(model_zip_bytes)
-            #blob.upload_from_filename(temp_zip.name)
 
     return model, metadata, blob
 
@@ -1819,16 +1814,6 @@ def data_check_datasets(file,load_data = True):
     else:
         content_type, content_string = file[1].split(',')
         decoded = base64.b64decode(content_string)
-
-        # assemble dataset metadata object.
-        # extract column names- interpret wav #s from other columns based on known rules.
-
-        # get the dataset hash, which will be used to validate it as the same ds object and help improve performance with caching.
-        # I could do this within data check datasets, but that will mean that each dataset will be redowloaded
-        #pd.read_csv(io.BytesIO(STORAGE_CLIENT.bucket(DATA_BUCKET).blob(f"datasets/{i}").download_as_bytes()))
-        #for i in datasets]
-        #ds_hash = hash_dataset
-
 
         data = io.StringIO(decoded.decode('utf-8'))
 
