@@ -1385,7 +1385,7 @@ def model_run_event(n_clicks,mode,pretrained_model,pretrained_model_metadata,app
                     else:
                         color_field = 'dataset_name'
 
-                    fig = px.scatter(formatted_data,x='ages_untransformed',y='age_predictions_untransformed',color=color_field,
+                    fig = px.scatter(formatted_data[formatted_data['ages_untransformed'].notna()],x='ages_untransformed',y='age_predictions_untransformed',color=color_field,
                     labels={"ages_untransformed":"True Values","age_predictions_untransformed":"Predicted Values"},template="plotly")
 
                     fig.add_shape(type="line",x0=formatted_data["ages_untransformed"].min(),y0=formatted_data["ages_untransformed"].min(),x1=formatted_data["ages_untransformed"].max(),y1=formatted_data["ages_untransformed"].max(),
