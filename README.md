@@ -1,3 +1,1 @@
-"# ftnirs-mlapp" 
-
-test repo on new device
+Code for the ftnirs application. 
