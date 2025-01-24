@@ -1427,7 +1427,7 @@ def model_run_event(n_clicks,mode,pretrained_model,pretrained_model_metadata,app
         download_out = [html.Div([dcc.Loading(id='dl-loading',children=[html.Button("Download Results",id="btn-download-results"),
                                               dcc.Download(id="download-results")])]) if not (processing_fail or any_error) else ""]
 
-        upload_out = [html.Div([dcc.Loading(id='up-loading',children=[html.Button(html.Div(id="btn-message",children="Upload Trained model"),id="btn-upload-pretrained")])]) if not (processing_fail or any_error) else ""]
+        upload_out = [html.Div([dcc.Loading(id='up-loading',children=[html.Button(html.Div(id="btn-message",children="Upload Trained model"),id="btn-upload-pretrained")])]) if not (processing_fail or any_error or mode == 'Inference') else ""]
 
         artifacts_out = [html.Div([x for xs in artifacts for x in xs],style={'textAlign': 'left', 'vertical-align': 'top'})]
 
