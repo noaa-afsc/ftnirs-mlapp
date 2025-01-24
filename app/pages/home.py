@@ -227,7 +227,7 @@ layout = html.Div(id='parent', children=[
                 #todo signal explorer.
                 dcc.Checklist(id='dataset-select',
                     options=get_datasets(), # [9:]if f"datasets/" == i[:8]
-                    value=[], style={'maxHeight':200,'overflowY':'auto','width':left_body_width},inputStyle={"margin-right":checklist_pixel_padding_between }),
+                    value=[], style={'maxHeight':100,'overflowY':'auto','width':left_body_width},inputStyle={"margin-right":checklist_pixel_padding_between }),
                 html.Div(id='ds-buttons',children=[
                     html.Div([html.Button(id='refresh-ds',children=[dcc.Loading(html.Div(id='ds_ref_content',children=ref_content),type="circle")],style={'width':refresh_button_width,"align-items":'center','padding':0})],style={"display": "inline-block"}), #,'margin': 0
                     html.Div([dcc.Upload(
@@ -1265,6 +1265,16 @@ def model_run_event(n_clicks,mode,pretrained_model,pretrained_model_metadata,app
                                                                      response_scaler=config_dict["params_dict"].get("response-scaling"),\
                                                                      splitvec=splitvec, interp_minmaxstep=interp)
 
+                   #thinking for this- should check na's to spit warning, but move NA tolerance behavior to ml codebase.
+                   # if formatted_data.isnull().age.any():
+                   #     LOGGER_MANUAL.info(f"{session_id} Warning, missing age values present, excluding from training (rid: {run_id[:6]}...)")
+                   #     na_rows = formatted_data.loc[pd.isna(formatted_data["age"]), :].index.to_list()
+                   # else:
+                   #     na_rows = []
+                   # formatted_data = formatted_data.dropna(subset=["age"])
+                   # if formatted_data.shape[0] == 0:
+                   #     raise Exception("No ages present in training dataset(s)- training impossible.")
+
                     #remove any columns that were unselected in data pane.
 
                     LOGGER_MANUAL.info(f"{session_id} Starting model training (rid: {run_id[:6]}...)")
@@ -1362,11 +1372,11 @@ def model_run_event(n_clicks,mode,pretrained_model,pretrained_model_metadata,app
 
                     LOGGER_MANUAL.info(f"{session_id} Staging model object (rid: {run_id[:6]}...)")
 
+                #import code
+                #code.interact(local=dict(globals(), **locals()))
                 combined_data['age_predictions_untransformed'] = predictions
 
                 #merge combined with formatted.
-                #import code
-                #code.interact(local=dict(globals(), **locals()))
 
                 formatted_data = combined_data.merge(formatted_data, how='inner', on=IDNAME)
                 if RESPONSENAME in formatted_data.columns:
