@@ -576,6 +576,10 @@ def present_columns(data_dict,model_dict,datasets,mode,pretrained_val,approach_v
 
     pretrained_val = pretrained_val['value']
 
+    print(model_dict)
+
+    print(model_dict.get('cols_active',{}))
+
     #clear this out to make conditional logic cleaner within
     if mode=='Training':
         pretrained_val = None
@@ -621,8 +625,14 @@ def present_columns(data_dict,model_dict,datasets,mode,pretrained_val,approach_v
 
     if pretrained_val != None: #and mode is not 'Training':
 
+
         pretrained_include = [i.split(ONE_HOT_FLAG)[0] if ONE_HOT_FLAG in i else i for i in ast.literal_eval(model_dict[pretrained_val]['bio_columns'])] + [WN_STRING_NAME]
         pretrained_include_std = set([l for l in pretrained_include if l in STANDARD_COLUMN_NAMES])
+
+        #import code
+        #code.interact(local=dict(globals(), **locals()))
+
+
         standard_cols_counter = Counter([i for sublist in [ast.literal_eval(data_dict[i]['standard_columns']) for i in datasets] for i in sublist])
         standard_cols_zero_counts = [l for l in pretrained_include_std if l not in standard_cols_counter]
         for l in standard_cols_zero_counts:
@@ -674,8 +684,8 @@ def present_columns(data_dict,model_dict,datasets,mode,pretrained_val,approach_v
         pretrained_include = []
 
     #filter out id from standard columns display, where it never should be used in training.
-    standard_cols_counts_display = [(str(x[0]),f"{x[0]} ({x[1]}/{ds_count}) {'(one hot encoded)' if STANDARD_COLUMN_NAMES[x[0]]['data_type'] == 'categorical' else ''} {' (included in pretrained model)' if x[0] in pretrained_include and mode == 'Fine-tuning' else ''}",x[1]/ds_count) for x in sorted(standard_cols_counter.items(), key = lambda x: x[1], reverse = True)]
-    other_cols_counts_display = [(str(x[0]),f"{x[0]} ({x[1]}/{ds_count} {' (included in pretrained model)' if x[0] in pretrained_include and mode == 'Fine-tuning' else ''})",x[1]/ds_count) for x in sorted(other_cols_counter.items(), key = lambda x: x[1], reverse = True)]
+    standard_cols_counts_display = [(str(x[0]),f"{x[0]} ({x[1]}/{ds_count}) {'(one hot encoded)' if STANDARD_COLUMN_NAMES[x[0]]['data_type'] == 'categorical' else ''} {' (included in pretrained model)' if x[0] in pretrained_include and mode == 'Fine-tuning' else ''} {' (previously NULLIFIED)' if model_dict.get('cols_active',{}).get(x[0])==True and mode != 'Training' else ''}",x[1]/ds_count) for x in sorted(standard_cols_counter.items(), key = lambda x: x[1], reverse = True)]
+    other_cols_counts_display = [(str(x[0]),f"{x[0]} ({x[1]}/{ds_count}) {' (included in pretrained model)' if x[0] in pretrained_include and mode == 'Fine-tuning' else ''} {' (previously NULLIFIED)' if model_dict.get('cols_active',{}).get(x[0])==True and mode != 'Training' else ''}",x[1]/ds_count) for x in sorted(other_cols_counter.items(), key = lambda x: x[1], reverse = True)]
 
     #wav_opts = [{"value":WN_STRING_NAME, "label":wav_str,"disabled":True if (valid_waves != ds_count or wavs_exclude) else False,
     #             'extra':(valid_waves/ds_count,ds_count-len(wave_counts)+1/ds_count)}]
@@ -692,9 +702,6 @@ def present_columns(data_dict,model_dict,datasets,mode,pretrained_val,approach_v
     std_val = [m for m in [x[0] for x in standard_cols_counts_display] if m in previous_selections['std']]
     oc_opts = [{"value":x[0],"label":x[1],"disabled":False,'extra':x[2]} for x in other_cols_counts_display]+[{"value":x[0],"label":x[1],"disabled":True,'extra':x[2]} for x in other_excluded]
     oc_val = [m for m in [x[0] for x in other_cols_counts_display] if m in previous_selections['oc']]
-
-    #import code
-    #code.interact(local=dict(globals(), **locals()))
 
 
     children = [html.Div(children=[html.H4("Wave numbers:"),dcc.Checklist(id='data-pane-wav-numbers',
@@ -869,8 +876,7 @@ def download_results(n_clicks,run_id,run_name,params_dict,stats,data,config,desc
 
                     #return dcc.send_bytes(""),True
 
-                #import code
-                #code.interact(local=dict(globals(), **locals()))
+
 
                 #reads from temp. Could be issues with users expecting this to persist in their browser past the cycling window.
                 zipdest,_ = attach_description_model(run_id, run_name, description)
@@ -1257,7 +1263,6 @@ def model_run_event(n_clicks,mode,pretrained_model,pretrained_model_metadata,app
 
                     LOGGER_MANUAL.info(f"{session_id} Preprocessing and formatting data (rid: {run_id[:6]}...)")
 
-
                     config_dict["params_dict"]["wn-filter"] = None if config_dict["params_dict"]["wn-filter"] == "None" else config_dict["params_dict"]["wn-filter"]
 
                     formatted_data, metadata, data_hashes = format_data(data,filter_CHOICE=config_dict["params_dict"]["wn-filter"],scaler=config_dict["params_dict"]["bio-scaling"],\
@@ -1330,6 +1335,9 @@ def model_run_event(n_clicks,mode,pretrained_model,pretrained_model_metadata,app
 
                     formatted_data, metadata, data_hashes = format_data(data, filter_CHOICE=model_metadata[-1]['filter'],scaler=model_metadata[-1]['scaler'], splitvec=[0, 0] if mode == "Inference" else splitvec,interp_minmaxstep=interp,add_scale=True if mode == "Fine-tuning" else False)
 
+                    #import code
+                    #code.interact(local=dict(globals(), **locals()))
+
                 if mode == "Inference":
 
                     LOGGER_MANUAL.info(f"{session_id} Generating predictions (rid: {run_id[:6]}...)")
@@ -1372,8 +1380,6 @@ def model_run_event(n_clicks,mode,pretrained_model,pretrained_model_metadata,app
 
                     LOGGER_MANUAL.info(f"{session_id} Staging model object (rid: {run_id[:6]}...)")
 
-                #import code
-                #code.interact(local=dict(globals(), **locals()))
                 combined_data['age_predictions_untransformed'] = predictions
 
                 #merge combined with formatted.
@@ -1787,13 +1793,16 @@ def attach_model_metadata_gcp_obj(metadata,blob):
 
     wn_filter = metadata['filter']
 
+    cols_active = metadata["cols_active"]
+
     custom_metadata = {'num_trainings': num_trainings, 'description': metadata['description'],
                        "max_bio_columns": len(metadata['model_col_names']["bio_column_names_ordered_padded"]), \
                        'wave_number_min': wave_number_min, 'wave_number_max': wave_number_max,
                        "wave_number_step": wave_number_step,
                        'bio_columns': metadata['model_col_names']["bio_column_names_ordered"], \
                        'wn_scaler': wn_scaler, 'response_scaler': response_scaler, 'bio_scaler': bio_scaler,
-                       'wn_filter': wn_filter}
+                       'wn_filter': wn_filter,
+                       'cols_active':cols_active}
 
     attach_metadata_to_blob(custom_metadata, blob)
 
