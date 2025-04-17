@@ -74,7 +74,7 @@ DATA_BUCKET = os.getenv("DATA_BUCKET")
 TMP_BUCKET = os.getenv("TMP_BUCKET")
 
 PRETRAINED_MODEL_METADATA_PARAMS = ["wave_number_min", "wave_number_max", "wave_number_step", "wn_filter", "wn_scaler",
-                                  "bio_scaler", "response_scaler"]
+                                  "bio_scaler", "response_scaler","cols_active"]
 
 def get_objs():
     objs = list(STORAGE_CLIENT.list_blobs(DATA_BUCKET))
@@ -576,10 +576,6 @@ def present_columns(data_dict,model_dict,datasets,mode,pretrained_val,approach_v
 
     pretrained_val = pretrained_val['value']
 
-    print(model_dict)
-
-    print(model_dict.get('cols_active',{}))
-
     #clear this out to make conditional logic cleaner within
     if mode=='Training':
         pretrained_val = None
@@ -629,8 +625,7 @@ def present_columns(data_dict,model_dict,datasets,mode,pretrained_val,approach_v
         pretrained_include = [i.split(ONE_HOT_FLAG)[0] if ONE_HOT_FLAG in i else i for i in ast.literal_eval(model_dict[pretrained_val]['bio_columns'])] + [WN_STRING_NAME]
         pretrained_include_std = set([l for l in pretrained_include if l in STANDARD_COLUMN_NAMES])
 
-        #import code
-        #code.interact(local=dict(globals(), **locals()))
+
 
 
         standard_cols_counter = Counter([i for sublist in [ast.literal_eval(data_dict[i]['standard_columns']) for i in datasets] for i in sublist])
@@ -683,9 +678,12 @@ def present_columns(data_dict,model_dict,datasets,mode,pretrained_val,approach_v
     else:
         pretrained_include = []
 
+    #import code
+    #code.interact(local=dict(globals(), **locals()))
+
     #filter out id from standard columns display, where it never should be used in training.
-    standard_cols_counts_display = [(str(x[0]),f"{x[0]} ({x[1]}/{ds_count}) {'(one hot encoded)' if STANDARD_COLUMN_NAMES[x[0]]['data_type'] == 'categorical' else ''} {' (included in pretrained model)' if x[0] in pretrained_include and mode == 'Fine-tuning' else ''} {' (previously NULLIFIED)' if model_dict.get('cols_active',{}).get(x[0])==True and mode != 'Training' else ''}",x[1]/ds_count) for x in sorted(standard_cols_counter.items(), key = lambda x: x[1], reverse = True)]
-    other_cols_counts_display = [(str(x[0]),f"{x[0]} ({x[1]}/{ds_count}) {' (included in pretrained model)' if x[0] in pretrained_include and mode == 'Fine-tuning' else ''} {' (previously NULLIFIED)' if model_dict.get('cols_active',{}).get(x[0])==True and mode != 'Training' else ''}",x[1]/ds_count) for x in sorted(other_cols_counter.items(), key = lambda x: x[1], reverse = True)]
+    standard_cols_counts_display = [(str(x[0]),f"{x[0]} ({x[1]}/{ds_count}) {'(one hot encoded)' if STANDARD_COLUMN_NAMES[x[0]]['data_type'] == 'categorical' else ''} {' (included in pretrained model)' if x[0] in pretrained_include and mode == 'Fine-tuning' else ''} {' (currently NULLIFIED)' if ast.literal_eval(model_dict.get(pretrained_val,{}).get('cols_active','{}')).get(x[0])==False and mode != 'Training' else ''}",x[1]/ds_count) for x in sorted(standard_cols_counter.items(), key = lambda x: x[1], reverse = True)] #
+    other_cols_counts_display = [(str(x[0]),f"{x[0]} ({x[1]}/{ds_count}) {' (included in pretrained model)' if x[0] in pretrained_include and mode == 'Fine-tuning' else ''} {' (currently NULLIFIED)' if ast.literal_eval(model_dict.get(pretrained_val,{}).get('cols_active','{}')).get(x[0])==False and mode != 'Training' else ''}",x[1]/ds_count) for x in sorted(other_cols_counter.items(), key = lambda x: x[1], reverse = True)] #
 
     #wav_opts = [{"value":WN_STRING_NAME, "label":wav_str,"disabled":True if (valid_waves != ds_count or wavs_exclude) else False,
     #             'extra':(valid_waves/ds_count,ds_count-len(wave_counts)+1/ds_count)}]
