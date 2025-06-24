@@ -28,11 +28,12 @@ import uuid
 from logging.handlers import RotatingFileHandler
 from dotenv import load_dotenv
 from app_constant import app_header,header_height,encode_image
-from ftnirsml.code import loadModelWithMetadata, wnExtract, format_data, TrainingModeWithoutHyperband, TrainingModeWithHyperband,  hash_dataset, InferenceMode, TrainingModeFinetuning, packModelWithMetadata
+from ftnirsml.code import irina_custom_loss,TrainingModeIrinaLatest,loadModelWithMetadata, wnExtract, format_data, TrainingModeWithoutHyperband, TrainingModeWithHyperband,  hash_dataset, InferenceMode, TrainingModeFinetuning, packModelWithMetadata
 #import zipfile
 import tempfile
 import logging
 from tensorflow.keras.callbacks import EarlyStopping, Callback as tk_callbacks
+from tensorflow.keras.callbacks import ModelCheckpoint
 class EpochCounterCallback(tk_callbacks):
 
     def __init__(self,session_id,logger,run_id):
@@ -219,6 +220,7 @@ layout = html.Div(id='parent', children=[
         dcc.Store(id='config_table', storage_type=APP_STORAGE_TYPE, data={}),
         dcc.Store(id='vis_data', storage_type=APP_STORAGE_TYPE, data={}),
         dcc.Store(id='vis_data2', storage_type=APP_STORAGE_TYPE, data={}),
+        dcc.Store(id='prev_round',storage_type="memory", data=(0,0)),
             html.Div(id='left col top row',children=[
             html.Div(id='datasets',children=[
                 html.H2(id='H2_1', children='Select Datasets',
@@ -279,10 +281,19 @@ layout = html.Div(id='parent', children=[
             ],style ={"display": "inline-block",'vertical-align': 'top','textAlign': 'left','width':right_col_width,'height':top_row_max_height}), #'maxHeight':top_row_max_height
         ],style={'height':top_row_max_height,"paddingTop":header_height}),html.Hr(), #style={'marginBottom': 60}
     html.Div(id='middle_row',children=[
-        dcc.Markdown(id='manual-log-holder',style={'textAlign': 'left','vertical-align': 'top','width': left_col_width,'maxHeight':200,'height': 200,"display": "inline-block",'overflowY':'auto'}),
+        dcc.Markdown(id='manual-log-holder',style={'textAlign': 'left','vertical-align': 'top','width': "15%",'maxHeight':200,'height': 200,"display": "inline-block",'overflowY':'auto'}),
         html.Div([dcc.Loading(id='run-button-block',children=[html.Button([html.Div(id='run-message',children='RUN')],id="run-button",style={"font-weight": 900,"width":100,"height":100})])],
-             style={'textAlign': 'center','vertical-align': 'top',"width":middle_col_width,"display": "inline-block"}),
-        dcc.Graph(id='progress_vis',figure=go.Figure().update_layout(plot_bgcolor="white").update_xaxes(showticklabels=False).update_yaxes(showticklabels=False),style={'textAlign': 'left','vertical-align': 'top','width': left_col_width,'maxHeight':200,'height': 200,"display": "inline-block"}), #,figure=None , 'maxHeight':100,'height': 100
+             style={'textAlign': 'center','vertical-align': 'top',"width":"15%","display": "inline-block"}),
+        html.Div(id='graphs_section',children=[
+            dcc.Graph(id='progress_vis', figure=go.Figure().update_layout(plot_bgcolor="white").update_xaxes(
+                showticklabels=False).update_yaxes(showticklabels=False),
+                      style={'textAlign': 'left', 'vertical-align': 'top', 'width': "50%", 'maxHeight': 200,
+                             'height': 200, "display": "inline-block"}),  # ,figure=None , 'maxHeight':100,'height': 100
+            dcc.Graph(id='progress_vis2', figure=go.Figure().update_layout(plot_bgcolor="white").update_xaxes(
+                showticklabels=False).update_yaxes(showticklabels=False),
+                      style={'textAlign': 'left', 'vertical-align': 'top', 'width': "50%", 'maxHeight': 200,
+                             'height': 200, "display": "inline-block"}),
+        ],style={'textAlign': 'left','vertical-align': 'top','width': "60%",'maxHeight':200,'height': 200,"display": "inline-block",'overflowY':'auto'})
         ],style={"display": "inline-block","width":"100%"}),html.Hr(style={'marginBottom': 40}), #,'marginLeft': 650
 html.Div(
         [
@@ -305,24 +316,72 @@ html.Div(
 ])
 
 @callback(Output('progress_vis', "figure"),
-          Input("vis_data2","data"))
-def update_progress_vis(data):
+          Output('progress_vis2', "figure"),
+          Output("prev_round","data"),
+          Input("vis_data2","data"),
+          State("prev_round","data"))
+def update_progress_vis(data,prev_round):
 
     if data == {}:
         raise dash.exceptions.PreventUpdate()
     else:
 
-        #make the plot.
-        figure = go.Figure()
+        if data["round"]==1:
+            figure1 = go.Figure().update_layout(plot_bgcolor="white").update_xaxes(
+                showticklabels=False).update_yaxes(showticklabels=False)
+        else:
+            #print(data["round"])
+            #reset current round:
+            if prev_round[0] != data["round"]:
+                #every time the previous round doesn't equal the new round, truncate the data
+                prev_round[1] = len(data['loss'])
+                prev_round[0] = data["round"]
+
+            epochs = len(data['loss'][prev_round[1]:])
+            loss_data = data['loss'][prev_round[1]:]
+            val_loss_data = data['val_loss'][prev_round[1]:]
+            #if prev_round[0]==data["round"]:
+            #    prev_round[1] += 1
+
+            #    loss_data = data['loss'][-prev_round[1]:]
+            #    val_loss_data = data['val_loss'][-prev_round[1]:]
+            #    epochs = len(loss_data)
+
+            #else:
+            #    prev_round[0]= data["round"]
+            #    prev_round[1]= 1
+
+            #    loss_data = []
+            #    val_loss_data = []
+            #    epochs = 0
+
+            #make the plot for vis 1
+
+            figure1 = go.Figure()
+
+            figure1.add_trace(go.Scatter(x=list(range(1,epochs)),y=loss_data, mode='lines+markers',name='Loss'))
+            figure1.add_trace(go.Scatter(x=list(range(1, epochs)), y=val_loss_data, mode='lines+markers', name = 'Val Loss'))
+
+            figure1.update_layout(title={"text":f"Run id: {data['run_id'][:6]}.. Round: latest","x":0.5,"y":0.9},xaxis_title="Epochs",yaxis_title="Loss",
+                                 legend_title="metrics",plot_bgcolor="white",margin={"l":0,"r":0,"t":0,"b":0})
+        #import code
+        #code.interact(local=dict(globals(), **locals()))
+        #subset to current round
+
+        #data_round =  subset_df = df[df['column_name'] == target_value]
+
+
+        #figure 2
+        figure2 = go.Figure()
         epochs = len(data['loss'])+1 #don't use epochs, since some can be missed due to use of interval component (fix?)
 
-        figure.add_trace(go.Scatter(x=list(range(1,epochs)),y=data['loss'], mode='lines+markers',name='Loss'))
-        figure.add_trace(go.Scatter(x=list(range(1, epochs)), y=data['val_loss'], mode='lines+markers', name = 'Val Loss'))
+        figure2.add_trace(go.Scatter(x=list(range(1,epochs)),y=data['loss'], mode='lines+markers',name='Loss'))
+        figure2.add_trace(go.Scatter(x=list(range(1, epochs)), y=data['val_loss'], mode='lines+markers', name = 'Val Loss'))
 
-        figure.update_layout(title={"text":f"Run id: {data['run_id'][:6]}.. Round: {str(data['round'])}","x":0.5,"y":0.9},xaxis_title="Epochs",yaxis_title="Loss",
+        figure2.update_layout(title={"text":f"Run id: {data['run_id'][:6]}.. Round: {str(data['round'])}","x":0.5,"y":0.9},xaxis_title="Epochs",yaxis_title="Loss",
                              legend_title="metrics",plot_bgcolor="white",margin={"l":0,"r":0,"t":0,"b":0})
 
-        return figure
+        return figure2,figure1,prev_round
 
 @callback(Output('vis_data2', "data"),
           Input("vis_data","data"),
@@ -354,8 +413,7 @@ def update_logs(n_intervals,session_data,before_vis_data):
     #read the log entries from the last second and populate
     with open('session_logs.log','r') as log_file:
 
-        #import code
-        #code.interact(local=dict(globals(), **locals()))
+
         manual = [line[:19]+" "+line[70:] for line in log_file if (session_data in line and line[26:30] == 'INFO' and abs((datetime.strptime(line[0:19],"%Y-%m-%d %H:%M:%S")-datetime.now())) < timedelta(days=1))]
 
     if len(manual) > 0:
@@ -1229,6 +1287,14 @@ def model_run_event(n_clicks,mode,pretrained_model,pretrained_model_metadata,app
 
                     callbacks = [EpochCounterCallback(session_id, LOGGER_MANUAL, run_id)]
 
+                    outputFilePath='estimator'
+                    checkpointer = ModelCheckpoint(filepath=outputFilePath,
+                               verbose=1,
+                               save_best_only=True)
+
+                    #present in irina latest, throw it in
+                    callbacks.append(checkpointer)
+
                     if config_dict["params_dict"].get("define-early-stopping"):
                         patience = config_dict["params_dict"].get("early-stopping-patience",4)
                         metric = config_dict["params_dict"].get("early-stopping-metric","val_loss")
@@ -1309,6 +1375,21 @@ def model_run_event(n_clicks,mode,pretrained_model,pretrained_model_metadata,app
                             seed_value = config_dict["params_dict"].get('seed')
                         )
 
+                    elif approach == 'irina CIE 2025':
+
+                        model, training_outputs, additional_outputs = TrainingModeIrinaLatest(
+                            data=formatted_data,
+                            scaler=metadata['scaler'],
+                            bio_idx=metadata["datatype_indices"]["bio_indices"],
+                            wn_idx=metadata["datatype_indices"]["wn_indices"],
+                            extra_bio_columns=config_dict["params_dict"].get('num_extra_bio', TRAINING_APPROACHES[approach]["parameters"]["num_extra_bio"]["default_value"]),
+                            epochs=config_dict["params_dict"].get('epoch', 30),
+                            max_epochs_hb=config_dict["params_dict"].get('hyperband_max_epoch', TRAINING_APPROACHES[approach]["parameters"]["hyperband_max_epoch"]["default_value"]), #, #make this into general training parameter.
+                            callbacks = callbacks,
+                            seed_value = config_dict["params_dict"].get('seed'),
+                            loss_fxn = irina_custom_loss if config_dict["params_dict"].get('use_custom_loss') else 'mse'
+                        )
+
                     metadata.update({'model_col_names': training_outputs["model_col_names"],'training_history':training_outputs['training_history'],'additional_outputs':additional_outputs,
                                      'data_hashes': [{a: b} for (a, b) in zip(datasets, data_hashes)]})
 
@@ -1333,8 +1414,7 @@ def model_run_event(n_clicks,mode,pretrained_model,pretrained_model_metadata,app
 
                     formatted_data, metadata, data_hashes = format_data(data, filter_CHOICE=model_metadata[-1]['filter'],scaler=model_metadata[-1]['scaler'], splitvec=[0, 0] if mode == "Inference" else splitvec,interp_minmaxstep=interp,add_scale=True if mode == "Fine-tuning" else False)
 
-                    #import code
-                    #code.interact(local=dict(globals(), **locals()))
+
 
                 if mode == "Inference":
 
