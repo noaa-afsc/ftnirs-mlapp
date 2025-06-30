@@ -115,12 +115,14 @@ for i in TRAINING_APPROACHES.keys():
         for m in TRAINING_APPROACHES[i]["parameters"]:
             if TRAINING_APPROACHES[i]["parameters"][m]["data_type2"]==bool:
                 obj.append(html.Div(id=m+'-title',children=TRAINING_APPROACHES[i]["parameters"][m]["display_name"]))
+                #obj.append(html.Div(children=TRAINING_APPROACHES[i]["parameters"][m]["display_name"]))
                 obj.append(daq.ToggleSwitch(id=m, value=TRAINING_APPROACHES[i]["parameters"][m]["default_value"]))
             else:
                 obj.append(html.Div(TRAINING_APPROACHES[i]["parameters"][m]["display_name"]))
                 obj.append(dcc.Input(id=m, type=TRAINING_APPROACHES[i]["parameters"][m]["data_type"], \
                                                          placeholder=str(TRAINING_APPROACHES[i]["parameters"][m]["data_type2"]).split(" ")[1][1:-2] + \
                                      " (default: " + str(TRAINING_APPROACHES[i]["parameters"][m]["default_value"])+")"))
+
         TRAINING_APPROACHES[i]["dash_params"]=html.Div(obj)
 
 APP_STORAGE_TYPE = 'session' #memory, session, local
@@ -1640,6 +1642,7 @@ def get_approach_parameters(mode,approach):
     approach = approach['value']
 
     if mode == 'Training' and approach is not None:
+        print(TRAINING_APPROACHES[approach]["dash_params"])
         return  [html.H4(approach),TRAINING_APPROACHES[approach]["dash_params"] if "dash_params" in TRAINING_APPROACHES[approach] else None]
 
 @callback(

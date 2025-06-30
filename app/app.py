@@ -41,9 +41,18 @@ for i in TRAINING_APPROACHES.keys():
             if TRAINING_APPROACHES[i]['parameters'][m]["data_type2"]==bool:
                 bool_callbacks_needed[m]=TRAINING_APPROACHES[i]['parameters'][m]
 
-#this is ill as hell!
+#print(bool_callbacks_needed)
+
+#this fixes late closure issue with lambda in simpler loop
+def make_callback(component_name):
+    return lambda val: f"{component_name.split(':')[0]}: {val}"
+
 for i in bool_callbacks_needed:
-    app.callback(Output(i + "-title", "children"),Input(i, 'value'))(lambda val: f"{bool_callbacks_needed[i]['display_name'].split(':')[0]}: {val}")
+    app.callback(Output(i + "-title", "children"),Input(i, 'value'))(make_callback(bool_callbacks_needed[i]['display_name']))
+
+#this is ill as hell! but bugged, replace with above.
+#for i in bool_callbacks_needed:
+#    app.callback(Output(i + "-title", "children"),Input(i, 'value'))(lambda val: f"{bool_callbacks_needed[i]['display_name'].split(':')[0]}: {val}")
 
 if __name__ == '__main__':
 
